@@ -1,0 +1,24 @@
+{
+  "local-llm": {
+    "name": "Local LLM (Self-Hosted)",
+    "baseUrl": "http://localhost:11434/v1",
+    "apiKey": "ollama",
+    "api": "openai-completions",
+    "models": [
+      {
+        "id": "llama-3-70b",
+        "name": "Llama 3 70B",
+        "reasoning": false,
+        "input": ["text"],
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 4096
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+*.vsix
+
+# Editor / OS
+.vscode-test/
+.DS_Store
+
+# Local backups and scratch files
+*.bak
+*.bak-*
+*.orig
+*.log
+
+# Local environment
+.env
+.env.local

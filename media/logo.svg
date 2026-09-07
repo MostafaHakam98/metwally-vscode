@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <linearGradient id="mtwGrad" x1="4" y1="2" x2="20" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="0.55" stop-color="#7C5CFF"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#mtwGrad)" d="M13.2 2.5 4.6 13.2a.6.6 0 0 0 .47.98h4.7l-1.0 6.9a.6.6 0 0 0 1.06.46l8.6-10.7a.6.6 0 0 0-.47-.98h-4.7l1.0-6.9a.6.6 0 0 0-1.06-.46Z"/>
+</svg>

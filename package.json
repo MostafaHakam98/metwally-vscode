@@ -1,0 +1,144 @@
+{
+  "name": "pi-vscode",
+  "displayName": "Metwally Coding Agent",
+  "description": "Self-hosted coding agent for VS Code, powered by the pi CLI.",
+  "version": "0.2.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["AI", "Chat", "Programming Languages", "Other"],
+  "keywords": ["ai", "agent", "chat", "self-hosted", "qwen", "llm"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "metwally",
+          "title": "Metwally",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "metwally": [
+        {
+          "type": "webview",
+          "id": "piVscode.chatView",
+          "name": "Chat",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Metwally Coding Agent"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "piVscode.openChat", "title": "Open Chat in Editor", "category": "Metwally", "icon": "$(zap)" },
+      { "command": "piVscode.focusView", "title": "Focus Chat Sidebar", "category": "Metwally" },
+      { "command": "piVscode.newSession", "title": "New Session", "category": "Metwally", "icon": "$(add)" },
+      { "command": "piVscode.abort", "title": "Stop Generating", "category": "Metwally", "icon": "$(stop-circle)" },
+      { "command": "piVscode.addSelection", "title": "Add Selection to Chat", "category": "Metwally" },
+      { "command": "piVscode.explainSelection", "title": "Explain Selection", "category": "Metwally" },
+      { "command": "piVscode.fixSelection", "title": "Fix Problems in Selection", "category": "Metwally" },
+      { "command": "piVscode.testSelection", "title": "Write Tests for Selection", "category": "Metwally" },
+      { "command": "piVscode.reviewChanges", "title": "Review Uncommitted Changes", "category": "Metwally" },
+      { "command": "piVscode.showLogs", "title": "Show Logs", "category": "Metwally", "icon": "$(output)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "piVscode.newSession", "when": "view == piVscode.chatView", "group": "navigation@1" },
+        { "command": "piVscode.openChat", "when": "view == piVscode.chatView", "group": "navigation@2" },
+        { "command": "piVscode.showLogs", "when": "view == piVscode.chatView", "group": "1_run" }
+      ],
+      "editor/context": [
+        { "command": "piVscode.addSelection", "when": "editorHasSelection", "group": "metwally@1" },
+        { "command": "piVscode.explainSelection", "when": "editorHasSelection", "group": "metwally@2" },
+        { "command": "piVscode.fixSelection", "when": "editorHasSelection", "group": "metwally@3" },
+        { "command": "piVscode.testSelection", "when": "editorHasSelection", "group": "metwally@4" }
+      ],
+      "commandPalette": [
+        { "command": "piVscode.focusView", "when": "false" }
+      ]
+    },
+    "keybindings": [
+      { "command": "piVscode.focusView", "key": "ctrl+alt+m", "mac": "cmd+alt+m" },
+      { "command": "piVscode.addSelection", "key": "ctrl+alt+i", "mac": "cmd+alt+i", "when": "editorHasSelection" },
+      { "command": "piVscode.abort", "key": "ctrl+alt+escape", "mac": "cmd+alt+escape", "when": "piVscode.busy" }
+    ],
+    "configuration": {
+      "title": "Metwally Coding Agent",
+      "properties": {
+        "piVscode.piPath": {
+          "type": "string",
+          "default": "pi",
+          "markdownDescription": "Path to the `pi` CLI binary. An absolute path is used as-is; otherwise common install locations (nvm, `/usr/local/bin`, `~/.local/bin`) are probed."
+        },
+        "piVscode.provider": {
+          "type": "string",
+          "default": "qwen38-a100",
+          "description": "LLM provider name passed to pi."
+        },
+        "piVscode.model": {
+          "type": "string",
+          "default": "qwen3.8-27b",
+          "description": "Active model id. Must match an entry in piVscode.models when that list is set."
+        },
+        "piVscode.modelLabel": {
+          "type": "string",
+          "default": "Qwen3.8-27B",
+          "description": "Display name shown in the chat header."
+        },
+        "piVscode.contextWindow": {
+          "type": "number",
+          "default": 229000,
+          "description": "Context window in tokens, used to draw the context-usage ring in the header."
+        },
+        "piVscode.models": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Models offered by the in-chat model picker. Each entry: `{ \"id\", \"label\", \"provider\", \"contextWindow\" }`. Leave empty to use the single model configured above.",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "provider"],
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "provider": { "type": "string" },
+              "contextWindow": { "type": "number", "default": 128000 }
+            }
+          }
+        },
+        "piVscode.providerScript": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional pi extension script loaded with `-e` (for example a self-hosted vLLM provider). Defaults to `~/pi-vscode/pi-config/extensions/vllm-stream.ts` when that file exists."
+        },
+        "piVscode.noSession": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable on-disk session persistence."
+        },
+        "piVscode.requestTimeoutMs": {
+          "type": "number",
+          "default": 600000,
+          "description": "How long to wait for a single agent turn before giving up."
+        },
+        "piVscode.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Metwally status bar item with live session cost."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  }
+}
