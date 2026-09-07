@@ -1431,3 +1431,171 @@ body.vscode-high-contrast #composer,
 body.vscode-high-contrast .code-block { border-color: var(--vscode-contrastBorder, var(--line-hard)); }
 
 body.vscode-high-contrast #app::before { display: none; }
+
+/* ---------------------------------------------------------------- pins ---- */
+/* Pinned files are re-read every turn, so they read as persistent state
+   rather than as the one-shot attachment chips directly below them. */
+#pins {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 0 2px 6px;
+}
+#pins:empty { display: none; }
+
+.pin {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 220px;
+    padding: 3px 6px 3px 7px;
+    font-size: 11px;
+    line-height: 1.4;
+    border: 1px solid color-mix(in srgb, var(--brand) 34%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--brand) 12%, transparent);
+    color: var(--t1);
+}
+.pin > svg:first-child { width: 11px; height: 11px; flex-shrink: 0; color: var(--brand); }
+.pin .pin-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin .x {
+    display: inline-flex;
+    padding: 1px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--t3);
+    cursor: pointer;
+}
+.pin .x svg { width: 10px; height: 10px; }
+.pin .x:hover { background: var(--s3); color: var(--err); }
+
+.att .pin-btn {
+    display: inline-flex;
+    padding: 1px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--t3);
+    cursor: pointer;
+}
+.att .pin-btn svg { width: 11px; height: 11px; }
+.att .pin-btn:hover { background: var(--s3); color: var(--brand); }
+
+/* ------------------------------------------------------ context inspector - */
+.ctx-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+}
+.ctx-total b { font-size: 17px; font-weight: 600; }
+.ctx-total .ctx-of { color: var(--t3); font-size: 12px; }
+
+.ctx-meter {
+    height: 4px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--s3);
+}
+.ctx-meter > i { display: block; height: 100%; background: var(--brand); }
+.ctx-meter.warn > i { background: var(--amber); }
+.ctx-meter.over > i { background: var(--err); }
+
+.ctx-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+.ctx-row:last-child { border-bottom: 0; }
+.ctx-row > svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--t3); }
+.ctx-row .ctx-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-row .ctx-note { flex-shrink: 0; color: var(--t3); font-size: 11px; }
+.ctx-row .ctx-tok { flex-shrink: 0; font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; }
+.ctx-empty { color: var(--t3); padding: 6px 0; }
+
+/* --------------------------------------------------------- edit review ---- */
+/* Sits directly above the composer: the agent changed files on disk and the
+   user gets one glance plus an undo before sending the next prompt. */
+#edits {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    padding: 0 2px 6px;
+}
+#edits:empty { display: none; }
+
+.edits-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--t2);
+}
+.edits-label svg { width: 12px; height: 12px; color: var(--amber); }
+
+.edit {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 3px 4px 3px 8px;
+    font-size: 11px;
+    border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
+    border-radius: 999px;
+    background: var(--amber-wash);
+    color: var(--t1);
+    cursor: pointer;
+}
+.edit:hover { border-color: var(--amber); }
+.edit .edit-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edit .edit-stat { flex-shrink: 0; font-variant-numeric: tabular-nums; font-size: 10px; }
+.edit .edit-stat .add { color: var(--ok, #3fb950); }
+.edit .edit-stat .del { color: var(--err); }
+.edit .undo {
+    display: inline-flex;
+    padding: 2px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--t3);
+    cursor: pointer;
+}
+.edit .undo svg { width: 11px; height: 11px; }
+.edit .undo:hover { background: var(--s3); color: var(--err); }
+
+.edits-clear {
+    padding: 2px 7px;
+    font-size: 11px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--t3);
+    cursor: pointer;
+}
+.edits-clear:hover { background: var(--s3); color: var(--t1); }
+
+/* A steer is queued mid-turn, so it reads as pending rather than as a sent message. */
+.steer-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+    padding: 5px 9px;
+    font-size: 11.5px;
+    border-left: 2px solid var(--amber);
+    border-radius: 0 6px 6px 0;
+    background: var(--amber-wash);
+    color: var(--t2);
+}
+.steer-note svg { width: 12px; height: 12px; flex-shrink: 0; color: var(--amber); }
+
+.segmented button[disabled] { opacity: .35; cursor: not-allowed; }

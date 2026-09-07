@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "out-test",
+    "types": ["node"]
+  },
+  "include": ["src/lib.ts", "src/rpc-client.ts", "test/**/*"]
+}

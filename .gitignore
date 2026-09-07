@@ -18,3 +18,4 @@ out/
 # Local environment
 .env
 .env.local
+out-test/

@@ -7,3 +7,6 @@ package-lock.json
 *.vsix
 **/*.map
 **/*.ts
+out-test/**
+test/**
+tsconfig.test.json

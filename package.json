@@ -5,14 +5,35 @@
   "version": "0.2.0",
   "publisher": "local",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/MostafaHakam98/metwally-vscode.git" },
-  "bugs": { "url": "https://github.com/MostafaHakam98/metwally-vscode/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MostafaHakam98/metwally-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MostafaHakam98/metwally-vscode/issues"
+  },
   "homepage": "https://github.com/MostafaHakam98/metwally-vscode#readme",
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["AI", "Chat", "Programming Languages", "Other"],
-  "keywords": ["ai", "agent", "chat", "self-hosted", "qwen", "llm"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "chat",
+    "self-hosted",
+    "qwen",
+    "llm"
+  ],
   "main": "./out/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -35,37 +56,247 @@
       ]
     },
     "commands": [
-      { "command": "piVscode.openChat", "title": "Open Chat in Editor", "category": "Metwally", "icon": "$(zap)" },
-      { "command": "piVscode.focusView", "title": "Focus Chat Sidebar", "category": "Metwally" },
-      { "command": "piVscode.newSession", "title": "New Session", "category": "Metwally", "icon": "$(add)" },
-      { "command": "piVscode.abort", "title": "Stop Generating", "category": "Metwally", "icon": "$(stop-circle)" },
-      { "command": "piVscode.addSelection", "title": "Add Selection to Chat", "category": "Metwally" },
-      { "command": "piVscode.explainSelection", "title": "Explain Selection", "category": "Metwally" },
-      { "command": "piVscode.fixSelection", "title": "Fix Problems in Selection", "category": "Metwally" },
-      { "command": "piVscode.testSelection", "title": "Write Tests for Selection", "category": "Metwally" },
-      { "command": "piVscode.reviewChanges", "title": "Review Uncommitted Changes", "category": "Metwally" },
-      { "command": "piVscode.showLogs", "title": "Show Logs", "category": "Metwally", "icon": "$(output)" }
+      {
+        "command": "piVscode.openChat",
+        "title": "New Chat Tab",
+        "category": "Metwally",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "piVscode.focusView",
+        "title": "Focus Chat Sidebar",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.openSessionInEditor",
+        "title": "Open Current Session in Editor",
+        "category": "Metwally",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "piVscode.showSessions",
+        "title": "Switch Session...",
+        "category": "Metwally",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "piVscode.newSession",
+        "title": "New Session",
+        "category": "Metwally",
+        "icon": "$(add)"
+      },
+      {
+        "command": "piVscode.abort",
+        "title": "Stop Generating",
+        "category": "Metwally",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "piVscode.restart",
+        "title": "Restart Agent",
+        "category": "Metwally",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "piVscode.addSelection",
+        "title": "Add Selection to Chat",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.explainSelection",
+        "title": "Explain Selection",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.fixSelection",
+        "title": "Fix Problems in Selection",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.testSelection",
+        "title": "Write Tests for Selection",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.reviewChanges",
+        "title": "Review Uncommitted Changes",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.runAction",
+        "title": "Run Action...",
+        "category": "Metwally",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "piVscode.commitMessage",
+        "title": "Generate Commit Message",
+        "category": "Metwally",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "piVscode.addFileToChat",
+        "title": "Add File to Chat",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.explainTerminal",
+        "title": "Explain Terminal Output",
+        "category": "Metwally"
+      },
+      {
+        "command": "piVscode.openSettings",
+        "title": "Open Settings",
+        "category": "Metwally",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "piVscode.showLogs",
+        "title": "Show Logs",
+        "category": "Metwally",
+        "icon": "$(output)"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "piVscode.newSession", "when": "view == piVscode.chatView", "group": "navigation@1" },
-        { "command": "piVscode.openChat", "when": "view == piVscode.chatView", "group": "navigation@2" },
-        { "command": "piVscode.showLogs", "when": "view == piVscode.chatView", "group": "1_run" }
+        {
+          "command": "piVscode.newSession",
+          "when": "view == piVscode.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "piVscode.openChat",
+          "when": "view == piVscode.chatView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "piVscode.openSessionInEditor",
+          "when": "view == piVscode.chatView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "piVscode.showSessions",
+          "when": "view == piVscode.chatView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "piVscode.runAction",
+          "when": "view == piVscode.chatView",
+          "group": "1_run@1"
+        },
+        {
+          "command": "piVscode.restart",
+          "when": "view == piVscode.chatView",
+          "group": "1_run@2"
+        },
+        {
+          "command": "piVscode.openSettings",
+          "when": "view == piVscode.chatView",
+          "group": "9_config@1"
+        },
+        {
+          "command": "piVscode.showLogs",
+          "when": "view == piVscode.chatView",
+          "group": "9_config@2"
+        }
       ],
       "editor/context": [
-        { "command": "piVscode.addSelection", "when": "editorHasSelection", "group": "metwally@1" },
-        { "command": "piVscode.explainSelection", "when": "editorHasSelection", "group": "metwally@2" },
-        { "command": "piVscode.fixSelection", "when": "editorHasSelection", "group": "metwally@3" },
-        { "command": "piVscode.testSelection", "when": "editorHasSelection", "group": "metwally@4" }
+        {
+          "submenu": "piVscode.editorContext",
+          "group": "navigation@9",
+          "when": "editorTextFocus"
+        }
+      ],
+      "piVscode.editorContext": [
+        {
+          "command": "piVscode.addSelection",
+          "when": "editorHasSelection",
+          "group": "metwally@1"
+        },
+        {
+          "command": "piVscode.explainSelection",
+          "when": "editorHasSelection",
+          "group": "metwally@2"
+        },
+        {
+          "command": "piVscode.fixSelection",
+          "when": "editorHasSelection",
+          "group": "metwally@3"
+        },
+        {
+          "command": "piVscode.testSelection",
+          "when": "editorHasSelection",
+          "group": "metwally@4"
+        },
+        {
+          "command": "piVscode.runAction",
+          "group": "metwally@5"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "piVscode.openChat",
+          "group": "1_run@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "piVscode.addFileToChat",
+          "group": "7_modification@1"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "piVscode.explainTerminal",
+          "group": "navigation@1"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "piVscode.commitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation@1"
+        }
       ],
       "commandPalette": [
-        { "command": "piVscode.focusView", "when": "false" }
+        {
+          "command": "piVscode.focusView",
+          "when": "false"
+        },
+        {
+          "command": "piVscode.addFileToChat",
+          "when": "false"
+        }
       ]
     },
     "keybindings": [
-      { "command": "piVscode.focusView", "key": "ctrl+alt+m", "mac": "cmd+alt+m" },
-      { "command": "piVscode.addSelection", "key": "ctrl+alt+i", "mac": "cmd+alt+i", "when": "editorHasSelection" },
-      { "command": "piVscode.abort", "key": "ctrl+alt+escape", "mac": "cmd+alt+escape", "when": "piVscode.busy" }
+      {
+        "command": "piVscode.focusView",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m"
+      },
+      {
+        "command": "piVscode.openChat",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "piVscode.addSelection",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "piVscode.runAction",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
+      },
+      {
+        "command": "piVscode.abort",
+        "key": "ctrl+alt+escape",
+        "mac": "cmd+alt+escape",
+        "when": "piVscode.busy"
+      }
     ],
     "configuration": {
       "title": "Metwally Coding Agent",
@@ -73,27 +304,32 @@
         "piVscode.piPath": {
           "type": "string",
           "default": "pi",
-          "markdownDescription": "Path to the `pi` CLI binary. An absolute path is used as-is; otherwise common install locations (nvm, `/usr/local/bin`, `~/.local/bin`) are probed."
+          "markdownDescription": "Path to the `pi` CLI binary. An absolute path is used as-is; otherwise common install locations (nvm, `/usr/local/bin`, `~/.local/bin`) are probed.",
+          "order": 0
         },
         "piVscode.provider": {
           "type": "string",
           "default": "qwen38-a100",
-          "description": "LLM provider name passed to pi."
+          "description": "LLM provider name passed to pi.",
+          "order": 1
         },
         "piVscode.model": {
           "type": "string",
           "default": "qwen3.8-27b",
-          "description": "Active model id. Must match an entry in piVscode.models when that list is set."
+          "description": "Active model id. Must match an entry in piVscode.models when that list is set.",
+          "order": 2
         },
         "piVscode.modelLabel": {
           "type": "string",
           "default": "Qwen3.8-27B",
-          "description": "Display name shown in the chat header."
+          "description": "Display name shown in the chat header.",
+          "order": 3
         },
         "piVscode.contextWindow": {
           "type": "number",
           "default": 229000,
-          "description": "Context window in tokens, used to draw the context-usage ring in the header."
+          "description": "Context window in tokens, used to draw the context-usage ring in the header.",
+          "order": 4
         },
         "piVscode.models": {
           "type": "array",
@@ -101,47 +337,332 @@
           "markdownDescription": "Models offered by the in-chat model picker. Each entry: `{ \"id\", \"label\", \"provider\", \"contextWindow\" }`. Leave empty to use the single model configured above.",
           "items": {
             "type": "object",
-            "required": ["id", "label", "provider"],
+            "required": [
+              "id",
+              "label",
+              "provider"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "label": { "type": "string" },
-              "provider": { "type": "string" },
-              "contextWindow": { "type": "number", "default": 128000 }
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "contextWindow": {
+                "type": "number",
+                "default": 128000
+              }
             }
-          }
+          },
+          "order": 5
         },
         "piVscode.providerScript": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional pi extension script loaded with `-e` (for example a self-hosted vLLM provider). Defaults to `~/pi-vscode/pi-config/extensions/vllm-stream.ts` when that file exists."
+          "markdownDescription": "Optional pi extension script loaded with `-e` (for example a self-hosted vLLM provider). Defaults to `~/pi-vscode/pi-config/extensions/vllm-stream.ts` when that file exists.",
+          "order": 6
         },
         "piVscode.noSession": {
           "type": "boolean",
           "default": false,
-          "description": "Disable on-disk session persistence."
+          "description": "Disable on-disk session persistence.",
+          "order": 7
         },
         "piVscode.requestTimeoutMs": {
           "type": "number",
           "default": 600000,
-          "description": "How long to wait for a single agent turn before giving up."
+          "description": "How long to wait for a single agent turn before giving up.",
+          "order": 8
         },
         "piVscode.showStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show the Metwally status bar item with live session cost."
+          "description": "Show the Metwally status bar item with live session cost.",
+          "order": 9
+        },
+        "piVscode.extraArgs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra CLI arguments appended to the `pi` invocation, after `--provider`/`--model`.",
+          "order": 10
+        },
+        "piVscode.env": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Environment variables for the `pi` process (for example `OPENAI_BASE_URL`, `HTTPS_PROXY`, or `PATH`). Merged over the inherited environment.",
+          "order": 11
+        },
+        "piVscode.sessionDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory pi writes session files to, passed as `--session-dir`. Leave empty for pi's default. Ignored when `#piVscode.noSession#` is on.",
+          "order": 12
+        },
+        "piVscode.sessionsRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Root scanned to build the `/history` list. Defaults to `~/.pi/agent/sessions`. Set this to match `#piVscode.sessionDir#` if you moved it.",
+          "order": 13
+        },
+        "piVscode.sessionHistoryLimit": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 500,
+          "description": "How many recent sessions the history picker lists.",
+          "order": 14
+        },
+        "piVscode.promptPreamble": {
+          "type": "string",
+          "editPresentation": "multilineText",
+          "default": "[IMPORTANT: After thinking, you MUST produce a clear, concise final answer. Never leave it empty.]",
+          "markdownDescription": "Text prepended to every prompt. Set to an empty string to send prompts untouched.",
+          "order": 15
+        },
+        "piVscode.defaultEffort": {
+          "type": "string",
+          "default": "high",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high"
+          ],
+          "enumDescriptions": [
+            "No reasoning hint",
+            "Low reasoning effort",
+            "Medium reasoning effort",
+            "High reasoning effort"
+          ],
+          "description": "Reasoning effort selected when a chat view opens.",
+          "order": 16
+        },
+        "piVscode.maxAttachmentBytes": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1000,
+          "description": "Maximum bytes read from each attached text file. Longer files are truncated with a marker.",
+          "order": 17
+        },
+        "piVscode.fileSearchExclude": {
+          "type": "string",
+          "default": "**/{node_modules,.git,out,dist,build,.venv,__pycache__}/**",
+          "markdownDescription": "Glob excluded from the `@`-mention file picker.",
+          "order": 18
+        },
+        "piVscode.startupTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1000,
+          "markdownDescription": "How long to wait for session commands such as `new_session`. Prompts use `#piVscode.requestTimeoutMs#`.",
+          "order": 19
+        },
+        "piVscode.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Working directory for the agent. Empty uses the first workspace folder. Supports `${workspaceFolder}` and `~`.",
+          "order": 20
+        },
+        "piVscode.autoContextFiles": {
+          "type": "array",
+          "default": [
+            "AGENTS.md",
+            "CLAUDE.md",
+            "CONVENTIONS.md"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Files attached to the first prompt of each session, if they exist in the working directory.",
+          "order": 21
+        },
+        "piVscode.attachActiveFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Attach the active editor's file (or its selection) to every prompt.",
+          "order": 22
+        },
+        "piVscode.confirmNewSession": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask before discarding a transcript when starting a new session.",
+          "order": 23
+        },
+        "piVscode.showThinking": {
+          "type": "string",
+          "default": "collapsed",
+          "enum": [
+            "always",
+            "collapsed",
+            "hidden"
+          ],
+          "enumDescriptions": [
+            "Expand reasoning blocks as they stream",
+            "Show reasoning blocks collapsed",
+            "Do not render reasoning at all"
+          ],
+          "description": "How assistant reasoning is displayed in the transcript.",
+          "order": 24
+        },
+        "piVscode.statusBar.showCost": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the running session cost in the status bar. Requires `#piVscode.showStatusBar#`.",
+          "order": 25
+        },
+        "piVscode.customActions": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Extra prompt actions listed by **Metwally: Run Action...**. Reusing a built-in `id` (`explain`, `fix`, `test`, `review`) overrides it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique id."
+              },
+              "title": {
+                "type": "string",
+                "description": "Label in the action picker."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Prompt text. The code context is appended below it."
+              },
+              "autoSend": {
+                "type": "boolean",
+                "default": true,
+                "description": "Send immediately instead of filling the composer."
+              },
+              "includeSelection": {
+                "type": "boolean",
+                "default": true,
+                "description": "Append the selection, or the whole active file when nothing is selected."
+              },
+              "includeDiagnostics": {
+                "type": "boolean",
+                "default": false,
+                "description": "Append the problems reported for the selection."
+              }
+            }
+          },
+          "order": 26
+        },
+        "piVscode.maxSessions": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "markdownDescription": "Maximum chat **tabs** open at once. Each is an independent session with its own `pi` process, so concurrent turns contend for your model server. The sidebar session does not count.",
+          "order": 27
+        },
+        "piVscode.pinnedContext": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Files pinned into **every** prompt of every session, re-read each turn. Relative to the working directory. Session pins added from the composer are layered on top of these.",
+          "order": 28
+        },
+        "piVscode.reviewEdits": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Snapshot files before a tool edits them so the transcript can offer a **diff** and a **revert**. Only tools that name a file in their arguments are tracked — changes made by a shell command are not.",
+          "order": 29
         }
       }
-    }
+    },
+    "submenus": [
+      {
+        "id": "piVscode.editorContext",
+        "label": "Metwally",
+        "icon": "media/icon.svg"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "piVscode.setup",
+        "title": "Set up Metwally Coding Agent",
+        "description": "Point the extension at your pi CLI and your self-hosted model, then start chatting.",
+        "steps": [
+          {
+            "id": "install-pi",
+            "title": "Install the pi CLI",
+            "description": "Metwally drives the `pi` CLI. Install it, then set an absolute path if it is not on your PATH.\n[Open Settings](command:piVscode.openSettings)",
+            "media": {
+              "markdown": "media/walkthrough/install-pi.md",
+              "altText": "Installing the pi CLI"
+            }
+          },
+          {
+            "id": "provider",
+            "title": "Connect your model",
+            "description": "Register a provider script and pick the model the agent should run.\n[Open Settings](command:piVscode.openSettings)",
+            "media": {
+              "markdown": "media/walkthrough/provider.md",
+              "altText": "Configuring a provider"
+            }
+          },
+          {
+            "id": "chat",
+            "title": "Open the chat",
+            "description": "Start a session in the sidebar.\n[Focus Metwally](command:piVscode.focusView)",
+            "media": {
+              "markdown": "media/walkthrough/chat.md",
+              "altText": "Using the chat view"
+            }
+          },
+          {
+            "id": "actions",
+            "title": "Use editor actions",
+            "description": "Select code and run an action, or add your own in settings.\n[Run an Action](command:piVscode.runAction)",
+            "media": {
+              "markdown": "media/walkthrough/actions.md",
+              "altText": "Editor actions"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "node --test \"out-test/test/*.test.js\"",
     "package": "npx --yes @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.4.0"
+  },
+  "galleryBanner": {
+    "color": "#1f1f1f",
+    "theme": "dark"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Metwally runs an agent that executes shell commands and edits files in the open workspace."
+    }
   }
 }

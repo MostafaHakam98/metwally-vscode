@@ -20,6 +20,8 @@
     var dot = $("state-dot");
     var progress = $("progress");
     var attachBar = $("attachments");
+    var pinBar = $("pins");
+    var editBar = $("edits");
     var charCount = $("char-count");
 
     /* ---------------------------------------------------------------- state */
@@ -30,10 +32,15 @@
         focus: false,
         model: "",
         provider: "",
+        showThinking: "collapsed",
+        piMissing: false,
+        piPath: "",
         contextWindow: 0,
         cwd: "",
         workspace: "",
         attachments: [],
+        pins: [],
+        edits: [],
         transcript: [],      // [{role, text, attachments?}] — for export + restore
         usage: null,
         turnStart: 0,
@@ -47,6 +54,7 @@
         bot: null,           // current assistant turn container
         text: null,          // current streaming markdown node
         raw: "",             // raw markdown accumulated
+        segments: [],        // finished text runs of this turn, in order
         think: null,
         thinkRaw: "",
         thinkStart: 0,
@@ -129,7 +137,16 @@
         { icon: "i-wand",     title: "Refactor something",    desc: "Simplify without changing behaviour", prompt: "Find the messiest module here and propose a concrete, behaviour-preserving refactor." }
     ];
 
+    function setEffort(v) {
+        if (!v) return;
+        S.effort = v;
+        Array.prototype.forEach.call($("effort").children, function (b) {
+            b.classList.toggle("on", b.dataset.v === v);
+        });
+    }
+
     function welcome() {
+        if (S.piMissing) { welcomeMissingPi(); return; }
         var ctx = S.contextWindow ? fmtNum(S.contextWindow) + " context" : "";
         var bits = [S.model || "model unset", "self-hosted", ctx].filter(Boolean);
         var html =
@@ -160,6 +177,38 @@
                 "</div>" +
             "</div>";
         stream.innerHTML = html;
+    }
+
+    function welcomeMissingPi() {
+        stream.innerHTML =
+            '<div class="welcome">' +
+                '<div class="hero-mark">' +
+                    '<svg viewBox="0 0 24 24"><use href="#i-bolt" fill="none" stroke="url(#g-brand)" stroke-width="1.8"/></svg>' +
+                "</div>" +
+                "<h1>pi CLI not found</h1>" +
+                '<div class="sub"><span>Metwally needs the <code>pi</code> binary to run an agent.</span></div>' +
+                (S.piPath ? '<div class="cwd" title="' + esc(S.piPath) + '">' + svg("i-folder") + "looked for " + esc(S.piPath) + "</div>" : "") +
+                '<div class="cards">' +
+                    '<button class="card" data-act="open-settings">' +
+                        '<span class="card-icon">' + svg("i-gear") + "</span>" +
+                        '<span class="card-text">' +
+                            '<span class="card-title">Set the pi path</span>' +
+                            '<span class="card-desc">Point piVscode.piPath at the binary</span>' +
+                        "</span></button>" +
+                    '<button class="card" data-act="open-logs">' +
+                        '<span class="card-icon">' + svg("i-terminal") + "</span>" +
+                        '<span class="card-text">' +
+                            '<span class="card-title">Show logs</span>' +
+                            '<span class="card-desc">See which paths were probed</span>' +
+                        "</span></button>" +
+                    '<button class="card" data-act="restart">' +
+                        '<span class="card-icon">' + svg("i-refresh") + "</span>" +
+                        '<span class="card-text">' +
+                            '<span class="card-title">Retry</span>' +
+                            '<span class="card-desc">Restart the agent after installing</span>' +
+                        "</span></button>" +
+                "</div>" +
+            "</div>";
     }
 
     function clearWelcome() {
@@ -200,16 +249,27 @@
 
     function body() { return botTurn().querySelector(".body"); }
 
-    function endTurn() {
-        if (el.text) {
-            el.text.innerHTML = MD.render(el.raw);
-            if (el.raw.trim()) {
-                S.transcript.push({ role: "assistant", text: el.raw });
-                addTurnActions(el.text.parentNode, el.raw);
-            }
-        }
+    // Seal the live markdown node. Any text that arrives later opens a fresh
+    // node at the end of the turn, so it renders below the thinking or tool
+    // block that produced it instead of being folded back into an earlier one.
+    function closeText() {
+        if (!el.text) return;
+        el.text.innerHTML = MD.render(el.raw);
+        if (el.raw.trim()) el.segments.push(el.raw);
+        else el.text.remove();
         el.text = null;
         el.raw = "";
+    }
+
+    function endTurn() {
+        var container = el.bot ? el.bot.querySelector(".body") : null;
+        closeText();
+        if (el.segments.length) {
+            var full = el.segments.join("\n\n");
+            S.transcript.push({ role: "assistant", text: full });
+            addTurnActions(container, full);
+        }
+        el.segments = [];
         el.bot = null;
         persist();
     }
@@ -228,6 +288,7 @@
     /* ------------------------------------------------------------- thinking */
 
     function thinkBlock() {
+        if (S.showThinking === "hidden") return null;
         if (el.think) return el.think;
         var d = document.createElement("div");
         d.className = "think live";
@@ -239,6 +300,8 @@
                 svg("i-chevron", "caret") +
             "</button>" +
             '<div class="think-body-wrap"><div><div class="think-body scroll"></div></div></div>';
+        if (S.showThinking === "always") d.classList.add("open");
+        closeText();
         body().appendChild(d);
         el.think = d;
         el.thinkRaw = "";
@@ -318,6 +381,7 @@
         argsEl.firstChild.textContent = summary;
         argsEl.title = summary;
         d.dataset.args = (function () { try { return JSON.stringify(args || {}); } catch (e) { return "{}"; } })();
+        closeText();
         body().appendChild(d);
         el.tool = d;
         el.toolStart = Date.now();
@@ -396,9 +460,17 @@
     function updateSendState() {
         if (S.streaming) {
             btnSend.disabled = false;
-            btnSend.classList.add("stop");
-            btnSend.title = "Stop — Esc";
-            btnSend.innerHTML = svg("i-stop");
+            // Typing while the agent runs turns Send into a steer; empty input
+            // keeps it as Stop, so one button covers both without a mode toggle.
+            if (input.value.trim()) {
+                btnSend.classList.remove("stop");
+                btnSend.title = "Steer — redirect the running turn";
+                btnSend.innerHTML = svg("i-send");
+            } else {
+                btnSend.classList.add("stop");
+                btnSend.title = "Stop — Esc";
+                btnSend.innerHTML = svg("i-stop");
+            }
         } else {
             btnSend.classList.remove("stop");
             btnSend.title = "Send — Enter";
@@ -436,7 +508,9 @@
     });
 
     btnSend.addEventListener("click", function () {
-        if (S.streaming) post("abort");
+        // Matches what the button is showing: Stop only when there is nothing
+        // to steer with. Esc always aborts regardless of the input.
+        if (S.streaming && !input.value.trim()) post("abort");
         else send();
     });
 
@@ -456,7 +530,18 @@
     function send() {
         var text = input.value.trim();
         if (!text && !S.attachments.length) return;
-        if (S.streaming) return;
+
+        // Mid-turn, a message steers the running agent instead of queueing a
+        // new prompt. pi delivers it after the current tool calls finish.
+        if (S.streaming) {
+            if (!text) return;
+            post("steer", { text: text });
+            input.value = "";
+            autosize();
+            updateCount();
+            updateSendState();
+            return;
+        }
 
         if (text.charAt(0) === "/") {
             var handled = runSlash(text);
@@ -504,6 +589,37 @@
         persist();
     });
 
+    /* ---------------------------------------------------------- edit review */
+
+    function renderEdits() {
+        if (!S.edits.length) { editBar.innerHTML = ""; return; }
+        editBar.innerHTML =
+            '<span class="edits-label">' + svg("i-pencil") + S.edits.length + " file" + (S.edits.length === 1 ? "" : "s") + " changed</span>" +
+            S.edits.map(function (e, i) {
+                return '<span class="edit" data-i="' + i + '" title="Open diff against the pre-edit version">' +
+                    '<span class="edit-name">' + esc(e.name) + "</span>" +
+                    '<span class="edit-stat"><span class="add">+' + e.added + '</span> <span class="del">-' + e.removed + "</span></span>" +
+                    '<button class="undo" data-i="' + i + '" title="Revert this file">' + svg("i-refresh") + "</button></span>";
+            }).join("") +
+            '<button class="edits-clear" title="Dismiss — files stay as they are">Dismiss</button>';
+    }
+
+    editBar.addEventListener("click", function (e) {
+        if (e.target.closest(".edits-clear")) { post("dismiss-edits"); return; }
+        var undo = e.target.closest("button.undo");
+        if (undo) {
+            e.stopPropagation();
+            var u = S.edits[+undo.dataset.i];
+            if (u) post("revert-edit", { path: u.path });
+            return;
+        }
+        var chip = e.target.closest(".edit");
+        if (chip) {
+            var c = S.edits[+chip.dataset.i];
+            if (c) post("open-diff", { path: c.path });
+        }
+    });
+
     /* ----------------------------------------------------------- attachments */
 
     function renderAttachments() {
@@ -511,21 +627,137 @@
             var thumb = a.kind === "image" && a.data
                 ? '<img src="data:' + esc(a.mimeType || "image/png") + ";base64," + a.data + '" alt="">'
                 : svg(a.kind === "image" ? "i-image" : "i-file");
+            var pinnable = a.kind === "ref" && a.path
+                ? '<button class="pin-btn" data-i="' + i + '" title="Pin — keep in context every turn">' + svg("i-pin") + "</button>"
+                : "";
             return '<span class="att">' + thumb +
-                '<span class="att-name">' + esc(a.name) + "</span>" +
+                '<span class="att-name">' + esc(a.name) + "</span>" + pinnable +
                 '<button class="x" data-i="' + i + '" title="Remove">' + svg("i-x") + "</button></span>";
         }).join("");
         updateSendState();
     }
 
     attachBar.addEventListener("click", function (e) {
+        var pinBtn = e.target.closest("button.pin-btn");
+        if (pinBtn) {
+            var att = S.attachments[+pinBtn.dataset.i];
+            if (att && att.path) {
+                post("pin", { path: att.path, name: att.name });
+                S.attachments.splice(+pinBtn.dataset.i, 1);
+                renderAttachments();
+            }
+            return;
+        }
         var b = e.target.closest("button.x");
         if (!b) return;
         S.attachments.splice(+b.dataset.i, 1);
         renderAttachments();
     });
 
+    /* Pins survive every turn and are re-read server-side, so they are drawn
+       as persistent state above the one-shot attachment chips. */
+    /* A steer is not a user message: it is a mid-turn redirection, and the
+       transcript should not pretend it started a new exchange. */
+    function appendSteer(text) {
+        if (!text) return;
+        var d = document.createElement("div");
+        d.className = "steer-note";
+        d.innerHTML = svg("i-send") + "<span>Steering: " + esc(text) + "</span>";
+        stream.appendChild(d);
+        scroll();
+    }
+
+    /* Models without reasoning report only ["off"], so the rest are disabled
+       rather than silently doing nothing when clicked. */
+    function applyThinkingLevels(levels) {
+        var set = {};
+        levels.forEach(function (l) { set[l] = true; });
+        var any = false;
+        Array.prototype.forEach.call($("effort").children, function (b) {
+            var ok = !levels.length || !!set[b.dataset.v];
+            b.disabled = !ok;
+            b.title = ok ? b.title.replace(/ \(unsupported\)$/, "") : "Not supported by this model";
+            if (ok && b.classList.contains("on")) any = true;
+        });
+        if (!any && levels.length) setEffort(levels[levels.length - 1]);
+    }
+
+    /* pi reports the context window it actually compacts against; the ring used
+       to divide cumulative session tokens by the window, which only ever grew. */
+    function setContextUsage(u) {
+        if (!u || typeof u.percent !== "number") return;
+        var pct = Math.max(0, Math.min(100, u.percent));
+        $("ctx-ring").querySelector(".ring-fg").style.strokeDashoffset = String(100 - pct);
+        $("model-chip").title = (S.model || "") +
+            " · " + fmtNum(u.tokens || 0) + " / " + fmtNum(u.contextWindow || 0) + " context (" + pct + "%)";
+    }
+
+    function renderPins() {
+        pinBar.innerHTML = S.pins.map(function (p, i) {
+            return '<span class="pin" title="Re-sent with every prompt">' + svg("i-pin") +
+                '<span class="pin-name">' + esc(p.name) + "</span>" +
+                '<button class="x" data-i="' + i + '" title="Unpin">' + svg("i-x") + "</button></span>";
+        }).join("");
+    }
+
+    pinBar.addEventListener("click", function (e) {
+        var b = e.target.closest("button.x");
+        if (!b) return;
+        var p = S.pins[+b.dataset.i];
+        if (p) post("unpin", { path: p.path });
+    });
+
     $("btn-attach").addEventListener("click", function () { post("attach-file"); });
+
+    var QUICK_ADD = [
+        { kind: "active-file",  name: "Active file",      icon: "i-file",      desc: "The editor you were last in" },
+        { kind: "selection",    name: "Selection",        icon: "i-pencil",    desc: "Highlighted code, with its path" },
+        { kind: "open-editors", name: "Open editors",     icon: "i-openfile",  desc: "Every open text tab" },
+        { kind: "git-diff",     name: "Git diff",         icon: "i-git",       desc: "Uncommitted changes, staged included" },
+        { kind: "problems",     name: "Problems",         icon: "i-alert",     desc: "Diagnostics across the workspace" },
+        { kind: "terminal",     name: "Terminal output",  icon: "i-terminal",  desc: "The current terminal selection" }
+    ];
+
+    $("btn-add").addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (S.pop && S.pop.kind === "quick") { closePop(); return; }
+        openPop("quick", QUICK_ADD.map(function (q) {
+            return { name: q.name, desc: q.desc, icon: q.icon, ref: q };
+        }), function (it) {
+            post("quick-add", { kind: it.ref.kind });
+        }, "Add context");
+        input.focus();
+    });
+
+    $("btn-context").addEventListener("click", function () { post("context-info"); });
+
+    function contextModal(info) {
+        var items = info.items || [];
+        var total = info.totalTokens || 0;
+        var win = info.window || 0;
+        var pct = win ? Math.min(100, Math.round((total / win) * 100)) : 0;
+        var cls = pct >= 90 ? "over" : pct >= 60 ? "warn" : "";
+
+        var ICON = { auto: "i-book", pin: "i-pin", active: "i-file" };
+        var body =
+            '<div class="ctx-total"><b>' + fmtNum(total) + " tokens</b>" +
+                (win ? '<span class="ctx-of">' + pct + "% of " + fmtNum(win) + "</span>" : "") +
+            "</div>" +
+            (win ? '<div class="ctx-meter ' + cls + '"><i style="width:' + pct + '%"></i></div>' : "") +
+            (items.length
+                ? items.map(function (it) {
+                    return '<div class="ctx-row">' + svg(ICON[it.kind] || "i-file") +
+                        '<span class="ctx-name" title="' + esc(it.name) + '">' + esc(it.name) + "</span>" +
+                        (it.note ? '<span class="ctx-note">' + esc(it.note) + "</span>" : "") +
+                        '<span class="ctx-tok">~' + fmtNum(it.tokens) + "</span></div>";
+                }).join("")
+                : '<div class="ctx-empty">Nothing is pinned or auto-attached. ' +
+                  "Use <b>+</b> to add workspace context, or pin a file from its chip.</div>");
+
+        modal("Context", body +
+            '<div class="ctx-empty" style="margin-top:10px">Estimates only — roughly 4 characters per token. ' +
+            "Attachments below the composer are counted when you send.</div>", "i-scan");
+    }
 
     // drag & drop
     ["dragenter", "dragover"].forEach(function (ev) {
@@ -587,7 +819,9 @@
         { name: "/export",   icon: "i-download", desc: "Export this chat as Markdown",    run: function () { doExport(); } },
         { name: "/settings", icon: "i-gear",     desc: "Open Metwally settings",          run: function () { post("open-settings"); } },
         { name: "/help",     icon: "i-info",     desc: "Keyboard shortcuts and tips",     run: function () { helpModal(); } },
-        { name: "/compact",  icon: "i-layers",   desc: "Compact the conversation",        send: "Compact our conversation so far into a concise summary and continue from it." },
+        { name: "/context",  icon: "i-scan",     desc: "Show what is in context",         run: function () { post("context-info"); } },
+        { name: "/pins",     icon: "i-pin",      desc: "List pinned files",               run: function () { renderPins(); toast(S.pins.length ? S.pins.length + " file(s) pinned" : "Nothing pinned"); } },
+        { name: "/compact",  icon: "i-layers",   desc: "Compact the conversation",        run: function () { post("compact"); } },
         { name: "/review",   icon: "i-git",      desc: "Review uncommitted changes",      send: "Review my uncommitted changes for correctness, maintainability and CI impact. Tag each finding by severity." },
         { name: "/tests",    icon: "i-flask",    desc: "Write tests for recent work",     send: "Write focused tests covering the code we just changed, then run them." },
         { name: "/explain",  icon: "i-book",     desc: "Explain the active file",         send: "Explain the file currently open in my editor: what it does and how it fits the system." },
@@ -896,6 +1130,12 @@
                     autosize();
                     send();
                 }
+            } else if (kind === "open-settings") {
+                post("open-settings");
+            } else if (kind === "open-logs") {
+                post("open-logs");
+            } else if (kind === "restart") {
+                post("restart");
             }
             return;
         }
@@ -963,7 +1203,9 @@
 
     function resetChat() {
         S.transcript = [];
-        el.bot = null; el.text = null; el.raw = ""; el.think = null; el.tool = null;
+        S.edits = [];
+        renderEdits();
+        el.bot = null; el.text = null; el.raw = ""; el.segments = []; el.think = null; el.tool = null;
         clearInterval(timers.think); clearInterval(timers.tool);
         setUsage(null);
         $("ctx-ring").querySelector(".ring-fg").style.strokeDashoffset = "100";
@@ -982,8 +1224,14 @@
                 S.contextWindow = m.contextWindow || 0;
                 S.cwd = m.cwd || "";
                 S.workspace = m.workspace || "";
+                S.showThinking = m.showThinking || "collapsed";
+                S.piMissing = !!m.piMissing;
+                S.piPath = m.piPath || "";
                 $("model-label").textContent = m.modelLabel || m.model || "model";
                 $("model-chip").title = (m.model || "") + (m.contextWindow ? " · " + fmtNum(m.contextWindow) + " context" : "");
+                setEffort(m.defaultEffort);
+                // restore() re-applies the saved effort, so the default only
+                // takes effect on a genuinely fresh view.
                 if (!restore()) welcome();
                 setStreaming(false);
                 dot.className = "";
@@ -996,12 +1244,13 @@
                 break;
 
             case "thinking-start":
-                thinkBlock();
-                scroll();
+                if (thinkBlock()) scroll();
                 break;
 
             case "thinking-delta": {
-                var tb = thinkBlock().querySelector(".think-body");
+                var block = thinkBlock();
+                if (!block) break;
+                var tb = block.querySelector(".think-body");
                 el.thinkRaw += m.text;
                 tb.textContent = el.thinkRaw;
                 tb.scrollTop = tb.scrollHeight;
@@ -1014,6 +1263,7 @@
                 break;
 
             case "text-delta":
+                endThink();
                 if (!el.text) {
                     var host = document.createElement("div");
                     host.className = "md";
@@ -1053,6 +1303,37 @@
             case "streaming":
                 setStreaming(!!m.active);
                 if (!m.active) { endThink(); endTurn(); }
+                break;
+
+            case "edits":
+                S.edits = m.edits || [];
+                renderEdits();
+                break;
+
+            case "steered":
+                appendSteer(m.text || "");
+                break;
+
+            case "thinking-levels":
+                applyThinkingLevels(m.levels || []);
+                break;
+
+            case "context-usage":
+                setContextUsage(m.usage);
+                break;
+
+            case "pins":
+                S.pins = m.pins || [];
+                renderPins();
+                break;
+
+            case "context-info":
+                contextModal(m.info || {});
+                break;
+
+            case "settings":
+                S.showThinking = m.showThinking || "collapsed";
+                if (!S.transcript.length) setEffort(m.defaultEffort);
                 break;
 
             case "usage":

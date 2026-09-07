@@ -67,6 +67,10 @@ export interface PiRpcClientOptions {
     model?: string;
     provider?: string;
     extraArgs?: string[];
+    /** Appended after --provider/--model, from piVscode.extraArgs. */
+    userArgs?: string[];
+    /** Merged over the inherited environment, from piVscode.env. */
+    env?: Record<string, string>;
 }
 
 // =============================================================================
@@ -103,15 +107,14 @@ export class PiRpcClient extends EventEmitter {
         if (this.options.extraArgs) args.push(...this.options.extraArgs);
         if (this.options.provider) args.push("--provider", this.options.provider);
         if (this.options.model) args.push("--model", this.options.model);
+        if (this.options.userArgs) args.push(...this.options.userArgs);
 
         this.proc = spawn(this.options.piPath, args, {
             cwd: this.options.cwd,
             stdio: ["pipe", "pipe", "pipe"],
-            env: {
-                ...process.env,
-                // Ensure common paths are available for child processes
-                PATH: `${process.env.HOME}/.nvm/versions/node/v24.16.0/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
-            },
+            // The caller builds PATH from the node installs actually present, so
+            // nothing here is pinned to one version. User env wins last.
+            env: { ...process.env, ...(this.options.env ?? {}) },
         });
 
         this.proc.stdout!.on("data", (chunk: Buffer) => this.onStdout(chunk));
