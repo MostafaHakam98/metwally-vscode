@@ -41,6 +41,7 @@
         attachments: [],
         pins: [],
         edits: [],
+        piCommands: [],
         transcript: [],      // [{role, text, attachments?}] — for export + restore
         usage: null,
         turnStart: 0,
@@ -819,6 +820,9 @@
         { name: "/export",   icon: "i-download", desc: "Export this chat as Markdown",    run: function () { doExport(); } },
         { name: "/settings", icon: "i-gear",     desc: "Open Metwally settings",          run: function () { post("open-settings"); } },
         { name: "/help",     icon: "i-info",     desc: "Keyboard shortcuts and tips",     run: function () { helpModal(); } },
+        { name: "/skills",   icon: "i-bulb",     desc: "Browse skills and commands",      run: function () { post("browse-commands"); } },
+        { name: "/new-skill", icon: "i-plus",    desc: "Create a skill",                  run: function () { post("new-skill"); } },
+        { name: "/new-prompt", icon: "i-plus",   desc: "Create a prompt template",        run: function () { post("new-prompt"); } },
         { name: "/context",  icon: "i-scan",     desc: "Show what is in context",         run: function () { post("context-info"); } },
         { name: "/pins",     icon: "i-pin",      desc: "List pinned files",               run: function () { renderPins(); toast(S.pins.length ? S.pins.length + " file(s) pinned" : "Nothing pinned"); } },
         { name: "/compact",  icon: "i-layers",   desc: "Compact the conversation",        run: function () { post("compact"); } },
@@ -827,6 +831,24 @@
         { name: "/explain",  icon: "i-book",     desc: "Explain the active file",         send: "Explain the file currently open in my editor: what it does and how it fits the system." },
         { name: "/fix",      icon: "i-wand",     desc: "Fix the current problems",        send: "Look at the diagnostics/problems in this workspace and fix the real ones." }
     ];
+
+    /* pi owns prompt templates, skills and extension commands; the UI owns the
+       rest. Both are offered from one "/" list, pi's first — those are the ones
+       the user authored. */
+    var PI_ICON = { skill: "i-bulb", prompt: "i-book", extension: "i-plug" };
+
+    function allCommands() {
+        var mine = S.piCommands.map(function (c) {
+            return {
+                name: "/" + c.name,
+                desc: c.description || "",
+                icon: PI_ICON[c.source] || "i-slash",
+                badge: c.scope === "project" ? "project" : c.source,
+                pi: true
+            };
+        });
+        return mine.concat(COMMANDS);
+    }
 
     function closePop() {
         if (S.pop) { S.pop.node.remove(); S.pop = null; }
@@ -887,13 +909,14 @@
         var caret = input.selectionStart;
         var upto = v.slice(0, caret);
 
-        var slash = /(^|\n)\/([\w-]*)$/.exec(upto);
+        // ":" is allowed so "/skill:name" completes as one token.
+        var slash = /(^|\n)\/([\w:-]*)$/.exec(upto);
         if (slash) {
             var q = slash[2].toLowerCase();
-            var hits = COMMANDS.filter(function (c) { return c.name.slice(1).indexOf(q) === 0; });
+            var hits = allCommands().filter(function (c) { return c.name.slice(1).toLowerCase().indexOf(q) === 0; });
             if (hits.length) {
                 openPop("slash", hits.map(function (c) {
-                    return { name: c.name, desc: c.desc, icon: c.icon, mono: true, ref: c };
+                    return { name: c.name, desc: c.desc, icon: c.icon, key: c.badge, mono: true, ref: c };
                 }), function (it) {
                     input.value = v.slice(0, caret - slash[2].length - 1) + it.name + " " + v.slice(caret);
                     input.focus();
@@ -1320,6 +1343,10 @@
 
             case "context-usage":
                 setContextUsage(m.usage);
+                break;
+
+            case "commands":
+                S.piCommands = (m.commands || []).filter(function (c) { return c && c.name; });
                 break;
 
             case "pins":

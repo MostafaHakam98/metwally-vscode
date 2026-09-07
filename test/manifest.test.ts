@@ -183,3 +183,32 @@ test("the packaged extension excludes sources and config", () => {
         assert.ok(ignore.includes(rule), `.vscodeignore missing ${rule}`);
     }
 });
+
+test("authoring commands are reachable from the palette and the view menu", () => {
+    for (const c of ["piVscode.newSkill", "piVscode.newPromptTemplate", "piVscode.browseCommands"]) {
+        assert.ok(declaredCommands.has(c), `${c} not declared`);
+    }
+    const inView = new Set((pkg.contributes.menus["view/title"] as Array<{ command: string }>).map((i) => i.command));
+    assert.ok(inView.has("piVscode.browseCommands"), "browseCommands missing from the view title menu");
+});
+
+test("no command is hidden from the palette unless deliberately", () => {
+    const hidden = new Set((pkg.contributes.menus.commandPalette as Array<{ command: string; when: string }>)
+        .filter((i) => i.when === "false").map((i) => i.command));
+    // These two need arguments or a view context, so they are menu-only.
+    assert.deepEqual([...hidden].sort(), ["piVscode.addFileToChat", "piVscode.focusView"]);
+});
+
+test("the extension passes pi commands through without a preamble", () => {
+    // pi only expands /template and /skill:name when the slash is at index 0.
+    assert.match(extSrc, /isPiCommand\(text\)/,
+        "submit() must detect pi commands before prepending anything");
+});
+
+test("project trust is a spawn argument, so it forces a respawn", () => {
+    // --approve is baked into the command line; changing it must restart pi or
+    // project skills and templates stay invisible.
+    const respawn = extSrc.slice(extSrc.indexOf("const RESPAWN_KEYS"), extSrc.indexOf("const MODEL_KEYS"));
+    assert.ok(respawn.includes('"trustProject"'), "trustProject missing from RESPAWN_KEYS");
+    assert.match(extSrc, /"--approve"/, "trustProject must pass --approve to pi");
+});

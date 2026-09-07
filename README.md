@@ -72,6 +72,7 @@ Tests live in `test/` and run on the plain Node test runner:
 | Switch session | Click the status bar, or `Metwally: Switch Session...` |
 | Add selection | `Ctrl+Alt+I`, or right-click a selection |
 | Run an action | `Ctrl+Alt+A`, or right-click -> **Metwally** |
+| Skills and commands | `Ctrl+Alt+K` |
 | Add a file | Right-click it in the Explorer -> **Add File to Chat** |
 | Explain terminal output | Select it, right-click in the terminal |
 | Commit message | The sparkle icon in the Source Control title bar |
@@ -123,6 +124,36 @@ next prompt — auto-context files, settings pins, session pins, the active file
 with per-item token estimates and a meter against the model's context window.
 Estimates assume ~4 characters per token.
 
+### Skills and prompt templates
+
+Both are Markdown files pi discovers at startup. Create them from the extension
+— **New Skill** / **New Prompt Template**, or `/new-skill` and `/new-prompt` in
+the chat — and it writes them where pi already looks:
+
+| | Global | This project |
+|---|---|---|
+| Skills | `~/.pi/agent/skills/<name>/SKILL.md` | `.pi/skills/<name>/SKILL.md` |
+| Prompt templates | `~/.pi/agent/prompts/<name>.md` | `.pi/prompts/<name>.md` |
+
+A **prompt template** expands when you type `/name`, with `$1`, `$@` and
+`${1:-default}` arguments. A **skill** is a directory the agent loads on its own
+when the task matches its `description`, or on demand via `/skill:name`.
+
+`Ctrl+Alt+K` lists everything pi currently knows about — extension commands,
+templates and skills — to insert, open or delete. The same list is merged into
+the composer's `/` menu, so your own commands autocomplete alongside the
+built-in ones. pi expands them itself, so Metwally sends the message untouched.
+
+**Project resources need `piVscode.trustProject`.** pi never asks about trust in
+RPC mode, so without `--approve` it silently ignores everything under a
+project's `.pi/`. Turning the setting on passes that flag — which also lets pi
+load project settings and run project-local extensions, so enable it only for
+repositories you trust. The New Skill flow offers to enable it rather than
+writing a file pi would ignore.
+
+Skills and templates are scanned when pi starts, so the extension offers to
+restart the agent after creating one.
+
 ### Reviewing what the agent changed
 
 When a tool edits a file, the extension snapshots it first, then shows a bar
@@ -144,7 +175,8 @@ model call, instead of queueing a whole new prompt. `Esc` still aborts.
 
 - `/` opens the command palette — `/new`, `/clear`, `/history`, `/model`,
   `/focus`, `/export`, `/settings`, `/help`, `/context`, `/pins`, `/compact`,
-  `/review`, `/tests`, `/explain`, `/fix`.
+  `/skills`, `/new-skill`, `/new-prompt`, `/review`, `/tests`, `/explain`,
+  `/fix` — plus every prompt template, skill and extension command pi reports.
 - `@` fuzzy-finds a workspace file and attaches it as context.
 - Drag-and-drop or paste (images included) into the composer.
 - Code blocks carry **copy**, **insert at cursor** and **open in new editor**.
@@ -193,6 +225,7 @@ All under `piVscode.*`:
 | `maxAttachmentBytes` | `120000` | Per-file truncation limit |
 | `fileSearchExclude` | *(build dirs)* | Glob excluded from the `@` picker |
 | `pinnedContext` | `[]` | Files pinned into every prompt of every session |
+| `trustProject` | `false` | Pass `--approve` so pi loads this project's `.pi/` resources |
 | `customActions` | `[]` | Extra entries for **Run Action...** |
 
 ### View

@@ -5,8 +5,11 @@ import * as fs from "fs";
 import { spawnSync } from "child_process";
 import { PiRpcClient, UsageInfo } from "./rpc-client";
 import {
+    CommandKind, CommandScope, commandDir, commandFile, commandInvocation,
     estimateTokens, expandPath as expandPathIn, filePathFromArgs as filePathFromArgsIn,
-    humanBytes, lineDelta, relativeTime, textOf, titleFromPrompt, truncateForContext,
+    humanBytes, isPiCommand, lineDelta, normalizePiCommand, PiCommandInfo,
+    promptScaffold, RawPiCommand, relativeTime, skillScaffold,
+    slugify, textOf, titleFromPrompt, truncateForContext, validateCommandName,
 } from "./lib";
 import { renderHtml } from "./webview-html";
 
@@ -355,6 +358,12 @@ class ChatSession {
         // The setting declares "" as its default, so an empty value means
         // "unset" and we fall back to the checked-in vLLM provider script.
         const extraArgs: string[] = [];
+        // In --mode rpc pi never prompts for trust, so without --approve every
+        // project .pi/ skill, prompt template and setting is silently ignored.
+        if (cfg("trustProject", false)) {
+            extraArgs.push("--approve");
+            log("project trust: --approve (project .pi/ resources are loaded)");
+        }
         const configured = cfg("providerScript", "").trim();
         const scriptPath = configured || path.join(os.homedir(), "pi-vscode", "pi-config", "extensions", "vllm-stream.ts");
         if (fs.existsSync(scriptPath)) {
@@ -410,6 +419,7 @@ class ChatSession {
 
         this.client = client;
         void this.publishThinkingLevels();
+        void this.publishCommands();
         return client;
     }
 
@@ -581,6 +591,22 @@ class ChatSession {
                 out.show();
                 break;
 
+            case "browse-commands":
+                await vscode.commands.executeCommand(`${CFG}.browseCommands`);
+                break;
+
+            case "new-skill":
+                await vscode.commands.executeCommand(`${CFG}.newSkill`);
+                break;
+
+            case "new-prompt":
+                await vscode.commands.executeCommand(`${CFG}.newPromptTemplate`);
+                break;
+
+            case "list-commands":
+                await this.publishCommands();
+                break;
+
             case "open-diff":
                 await this.openDiff(String(msg.path ?? ""));
                 break;
@@ -661,6 +687,25 @@ class ChatSession {
     async submit(text: string, attachments: Attachment[], effort: string): Promise<void> {
         if (!text.trim() && !attachments.length) return;
         this.nameFromPrompt(text);
+
+        // pi expands /template and /skill:name itself, but only when the slash
+        // is the first character. Prepending a preamble or attached context
+        // would silently turn the command into literal prompt text.
+        if (isPiCommand(text) && !attachments.length) {
+            this.broadcast({ type: "user-message", text, attachments: [] });
+            this.setBusy(true);
+            try {
+                await this.applyThinking(effort);
+                await this.ensureClient().send(
+                    { type: "prompt", message: text.trim() } as never,
+                    cfg("requestTimeoutMs", 600_000),
+                );
+            } catch (err) {
+                this.broadcast({ type: "error", text: (err as Error).message });
+                this.setBusy(false);
+            }
+            return;
+        }
 
         this.broadcast({ type: "user-message", text, attachments: attachments.map((a) => ({ kind: a.kind, name: a.name })) });
         this.setBusy(true);
@@ -811,6 +856,28 @@ class ChatSession {
         } catch (err) {
             log(`set_model failed, restarting instead: ${(err as Error).message}`);
             this.restart();
+        }
+    }
+
+    /**
+     * pi's own command catalogue: extension commands, prompt templates and
+     * skills. Sent to the view so `/` lists them alongside the UI commands.
+     */
+    async publishCommands(): Promise<void> {
+        const commands = await this.fetchCommands();
+        if (commands) this.broadcast({ type: "commands", commands });
+    }
+
+    /** Null when this session has no live process to ask. */
+    async fetchCommands(): Promise<PiCommandInfo[] | null> {
+        if (!this.client) return null;
+        try {
+            const res = await this.client.send({ type: "get_commands" } as never, 15_000);
+            const raw = ((res.data ?? {}) as { commands?: RawPiCommand[] }).commands ?? [];
+            return raw.filter((c) => c?.name).map(normalizePiCommand);
+        } catch (err) {
+            log(`get_commands failed: ${(err as Error).message}`);
+            return null;
         }
     }
 
@@ -1278,6 +1345,188 @@ function selectionContext(): string | null {
 }
 
 // =============================================================================
+// Authoring skills and prompt templates
+// =============================================================================
+
+/**
+ * Create a skill or prompt template on disk in the location pi scans.
+ * Returns the file it wrote, or null when the user backed out.
+ */
+async function createCommand(kind: CommandKind): Promise<string | null> {
+    const label = kind === "skill" ? "skill" : "prompt template";
+
+    // Writing a project resource pi will not read is worse than not offering it.
+    const projectTrusted = cfg("trustProject", false);
+    const scopePick = await vscode.window.showQuickPick(
+        [
+            {
+                label: "$(globe) Global",
+                detail: commandDir(kind, "global", os.homedir(), workingDir()),
+                description: "Available in every project",
+                scope: "global" as CommandScope,
+            },
+            {
+                label: `$(root-folder) This project${projectTrusted ? "" : " — needs project trust"}`,
+                detail: commandDir(kind, "project", os.homedir(), workingDir()),
+                description: projectTrusted
+                    ? "Checked in with the repo"
+                    : "pi ignores project resources until piVscode.trustProject is on",
+                scope: "project" as CommandScope,
+            },
+        ],
+        { title: `New ${label} — where should it live?` },
+    );
+    if (!scopePick) return null;
+
+    if (scopePick.scope === "project" && !projectTrusted) {
+        const choice = await vscode.window.showWarningMessage(
+            "pi runs in RPC mode, where it never asks about project trust — so it ignores this project's "
+            + ".pi/ resources unless piVscode.trustProject is enabled. Enabling it also lets pi load this "
+            + "project's settings and run its extensions.",
+            { modal: true },
+            "Enable project trust", "Use global instead",
+        );
+        if (choice === "Enable project trust") {
+            await vscode.workspace.getConfiguration(CFG).update(
+                "trustProject", true, vscode.ConfigurationTarget.Workspace);
+        } else if (choice === "Use global instead") {
+            scopePick.scope = "global";
+        } else {
+            return null;
+        }
+    }
+
+    const name = await vscode.window.showInputBox({
+        title: `New ${label} — name`,
+        prompt: kind === "skill"
+            ? "Invoked as /skill:<name>, and loaded automatically when the description matches"
+            : "Invoked as /<name>",
+        placeHolder: kind === "skill" ? "pdf-processing" : "review-staged",
+        validateInput: (v) => validateCommandName(v) ?? undefined,
+    });
+    if (!name) return null;
+
+    const description = await vscode.window.showInputBox({
+        title: `New ${label} — description`,
+        prompt: kind === "skill"
+            ? "This decides when the agent loads the skill, so be specific about what it does and when to use it"
+            : "Shown in the / autocomplete",
+        placeHolder: kind === "skill"
+            ? "Extracts text and tables from PDFs. Use when working with PDF documents."
+            : "Review the staged git changes",
+        validateInput: (v) => (v.trim() ? undefined : "A description is required"),
+    });
+    if (description === undefined) return null;
+
+    let argumentHint = "";
+    if (kind === "prompt") {
+        argumentHint = await vscode.window.showInputBox({
+            title: "New prompt template — argument hint (optional)",
+            prompt: "Shown in autocomplete. <angle> for required, [square] for optional. Leave blank for none.",
+            placeHolder: "<PR-URL>",
+        }) ?? "";
+    }
+
+    const file = commandFile(kind, scopePick.scope, name.trim(), os.homedir(), workingDir());
+    if (fs.existsSync(file)) {
+        void vscode.window.showErrorMessage(`Metwally: ${vscode.workspace.asRelativePath(file)} already exists.`);
+        return null;
+    }
+
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, kind === "skill"
+            ? skillScaffold(name.trim(), description)
+            : promptScaffold(name.trim(), description, argumentHint), "utf8");
+    } catch (err) {
+        void vscode.window.showErrorMessage(`Metwally: cannot write ${file} — ${(err as Error).message}`);
+        return null;
+    }
+
+    log(`created ${kind}: ${file}`);
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    await vscode.window.showTextDocument(doc, { preview: false });
+    return file;
+}
+
+/** Skills and templates are scanned when pi starts, so a new one needs a restart. */
+async function offerRestart(mgr: SessionManager, what: string): Promise<void> {
+    const pick = await vscode.window.showInformationMessage(
+        `${what} created. pi discovers commands at startup — restart the agent to pick it up?`,
+        "Restart Agent", "Later",
+    );
+    if (pick === "Restart Agent") mgr.restartAll();
+}
+
+/** Browse everything pi currently knows about, and act on one. */
+async function browseCommands(mgr: SessionManager): Promise<void> {
+    const commands = await mgr.commands();
+    if (!commands.length) {
+        const pick = await vscode.window.showInformationMessage(
+            "Metwally: pi reports no skills, prompt templates or extension commands.",
+            "New Skill", "New Prompt Template",
+        );
+        if (pick === "New Skill") await newCommandFlow(mgr, "skill");
+        if (pick === "New Prompt Template") await newCommandFlow(mgr, "prompt");
+        return;
+    }
+
+    const ICON = { skill: "$(lightbulb)", prompt: "$(comment)", extension: "$(plug)" };
+    const pick = await vscode.window.showQuickPick(
+        commands.map((c) => ({
+            label: `${ICON[c.source] ?? "$(circle-outline)"} /${c.name}`,
+            description: [c.source, c.scope].filter(Boolean).join(" · "),
+            detail: c.description || c.path || "",
+            cmd: c,
+        })),
+        { title: "Metwally — skills and commands", placeHolder: "Pick one to insert, open or delete", matchOnDetail: true },
+    );
+    if (!pick) return;
+
+    const actions = [
+        { label: "$(send) Insert into the chat", act: "insert" },
+        ...(pick.cmd.path ? [
+            { label: "$(go-to-file) Open the file", act: "open" },
+            { label: "$(trash) Delete", act: "delete" },
+        ] : []),
+    ];
+    const action = await vscode.window.showQuickPick(actions, { title: `/${pick.cmd.name}` });
+    if (!action) return;
+
+    if (action.act === "insert") {
+        mgr.active()?.fill(`/${pick.cmd.name} `, false) ?? mgr.sidebarSession().fill(`/${pick.cmd.name} `, false);
+        return;
+    }
+    if (action.act === "open") {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(pick.cmd.path as string));
+        await vscode.window.showTextDocument(doc, { preview: false });
+        return;
+    }
+
+    const target = pick.cmd.path as string;
+    // A skill is a directory; deleting only SKILL.md would leave a broken shell.
+    const isSkill = pick.cmd.source === "skill" && path.basename(target) === "SKILL.md";
+    const victim = isSkill ? path.dirname(target) : target;
+    const yes = await vscode.window.showWarningMessage(
+        `Delete ${victim}?${isSkill ? " The whole skill directory is removed." : ""}`,
+        { modal: true }, "Delete",
+    );
+    if (yes !== "Delete") return;
+    try {
+        fs.rmSync(victim, { recursive: true, force: true });
+        void vscode.window.showInformationMessage(`Metwally: deleted /${pick.cmd.name}`);
+        mgr.restartAll();
+    } catch (err) {
+        void vscode.window.showErrorMessage(`Metwally: cannot delete — ${(err as Error).message}`);
+    }
+}
+
+async function newCommandFlow(mgr: SessionManager, kind: CommandKind): Promise<void> {
+    const file = await createCommand(kind);
+    if (file) await offerRestart(mgr, kind === "skill" ? "Skill" : "Prompt template");
+}
+
+// =============================================================================
 // SessionManager — owns every session, the status bar, and the active pointer
 // =============================================================================
 
@@ -1365,6 +1614,15 @@ class SessionManager {
     restartAll(): void {
         invalidatePiCache();
         for (const s of this.sessions.values()) s.restart();
+    }
+
+    /** pi's command catalogue, from whichever session has a live process. */
+    async commands(): Promise<PiCommandInfo[]> {
+        for (const s of [this.active(), ...this.sessions.values()]) {
+            const list = await s?.fetchCommands();
+            if (list) return list;
+        }
+        return [];
     }
 
     /** Model changes no longer need a respawn — pi swaps it in place. */
@@ -1548,6 +1806,9 @@ export function activate(context: vscode.ExtensionContext): void {
     reg("abort", () => target().abort());
     reg("restart", () => mgr.restartAll());
     reg("showLogs", () => out.show());
+    reg("newSkill", () => newCommandFlow(mgr, "skill"));
+    reg("newPromptTemplate", () => newCommandFlow(mgr, "prompt"));
+    reg("browseCommands", () => browseCommands(mgr));
     reg("openSettings", () =>
         vscode.commands.executeCommand("workbench.action.openSettings", "@ext:local.pi-vscode"));
 
@@ -1641,7 +1902,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // swapped in place via set_model, so switching it no longer costs a process.
     const RESPAWN_KEYS = [
         "piPath", "providerScript", "noSession",
-        "sessionDir", "env", "extraArgs", "workingDirectory",
+        "sessionDir", "env", "extraArgs", "workingDirectory", "trustProject",
     ];
     const MODEL_KEYS = ["model", "provider", "models", "modelLabel", "contextWindow"];
     const VIEW_KEYS = ["showThinking", "defaultEffort", "showStatusBar", "statusBar", "reviewEdits"];

@@ -145,6 +145,24 @@
         "category": "Metwally"
       },
       {
+        "command": "piVscode.browseCommands",
+        "title": "Skills and Commands...",
+        "category": "Metwally",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "piVscode.newSkill",
+        "title": "New Skill...",
+        "category": "Metwally",
+        "icon": "$(add)"
+      },
+      {
+        "command": "piVscode.newPromptTemplate",
+        "title": "New Prompt Template...",
+        "category": "Metwally",
+        "icon": "$(add)"
+      },
+      {
         "command": "piVscode.openSettings",
         "title": "Open Settings",
         "category": "Metwally",
@@ -198,6 +216,21 @@
           "command": "piVscode.showLogs",
           "when": "view == piVscode.chatView",
           "group": "9_config@2"
+        },
+        {
+          "command": "piVscode.browseCommands",
+          "when": "view == piVscode.chatView",
+          "group": "1_run@3"
+        },
+        {
+          "command": "piVscode.newSkill",
+          "when": "view == piVscode.chatView",
+          "group": "2_author@1"
+        },
+        {
+          "command": "piVscode.newPromptTemplate",
+          "when": "view == piVscode.chatView",
+          "group": "2_author@2"
         }
       ],
       "editor/context": [
@@ -296,6 +329,11 @@
         "key": "ctrl+alt+escape",
         "mac": "cmd+alt+escape",
         "when": "piVscode.busy"
+      },
+      {
+        "command": "piVscode.browseCommands",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k"
       }
     ],
     "configuration": {
@@ -586,6 +624,12 @@
           "default": true,
           "markdownDescription": "Snapshot files before a tool edits them so the transcript can offer a **diff** and a **revert**. Only tools that name a file in their arguments are tracked — changes made by a shell command are not.",
           "order": 29
+        },
+        "piVscode.trustProject": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Pass `--approve` to pi so it loads this project's `.pi/` resources — skills, prompt templates and settings. **In RPC mode pi never asks about trust, so without this those files are silently ignored.** Enabling it also lets pi run project-local extensions, so turn it on only for repositories you trust.",
+          "order": 30
         }
       }
     },
@@ -636,6 +680,15 @@
             "media": {
               "markdown": "media/walkthrough/actions.md",
               "altText": "Editor actions"
+            }
+          },
+          {
+            "id": "skills",
+            "title": "Teach it your workflows",
+            "description": "Create a reusable prompt template or a skill, stored globally or in this repo.\n[New Skill](command:piVscode.newSkill)",
+            "media": {
+              "markdown": "media/walkthrough/skills.md",
+              "altText": "Authoring skills and prompt templates"
             }
           }
         ]

@@ -149,3 +149,121 @@ test("textOf tolerates missing result and missing content", () => {
     assert.equal(textOf({}), "");
     assert.equal(textOf({ content: [{ type: "text" }] }), "");
 });
+
+// -----------------------------------------------------------------------------
+// Skills and prompt templates
+// -----------------------------------------------------------------------------
+
+import {
+    commandDir, commandFile, commandInvocation, isPiCommand, normalizePiCommand,
+    promptScaffold, skillScaffold, slugify, validateCommandName,
+} from "../src/lib";
+
+test("validateCommandName accepts pi's legal names", () => {
+    for (const n of ["pdf-processing", "data-analysis", "a", "a1", "x".repeat(64)]) {
+        assert.equal(validateCommandName(n), null, n);
+    }
+});
+
+test("validateCommandName rejects what pi rejects", () => {
+    for (const n of ["", "   ", "PDF-Processing", "-pdf", "pdf-", "pdf--processing",
+                     "pdf processing", "pdf_processing", "pdf.md", "x".repeat(65)]) {
+        assert.ok(validateCommandName(n), `${JSON.stringify(n)} should be rejected`);
+    }
+});
+
+test("slugify produces a name validateCommandName accepts", () => {
+    for (const raw of ["Review Staged Changes", "  PDF -- tools!! ", "C++ Build", "___"]) {
+        const slug = slugify(raw);
+        if (slug) assert.equal(validateCommandName(slug), null, `${raw} -> ${slug}`);
+    }
+    assert.equal(slugify("Review Staged Changes"), "review-staged-changes");
+    assert.equal(slugify("___"), "");
+});
+
+test("slugify never exceeds the length limit or ends in a hyphen", () => {
+    const slug = slugify("a ".repeat(80));
+    assert.ok(slug.length <= 64);
+    assert.ok(!slug.endsWith("-"));
+    assert.equal(validateCommandName(slug), null);
+});
+
+test("commandDir matches the locations pi documents", () => {
+    const home = "/home/u";
+    const work = "/w/proj";
+    assert.equal(commandDir("skill", "global", home, work), "/home/u/.pi/agent/skills");
+    assert.equal(commandDir("prompt", "global", home, work), "/home/u/.pi/agent/prompts");
+    assert.equal(commandDir("skill", "project", home, work), "/w/proj/.pi/skills");
+    assert.equal(commandDir("prompt", "project", home, work), "/w/proj/.pi/prompts");
+});
+
+test("a skill is a directory with SKILL.md, a template is a flat file", () => {
+    const home = "/home/u";
+    const work = "/w/proj";
+    assert.equal(commandFile("skill", "global", "pdf", home, work), "/home/u/.pi/agent/skills/pdf/SKILL.md");
+    assert.equal(commandFile("prompt", "project", "review", home, work), "/w/proj/.pi/prompts/review.md");
+});
+
+test("commandInvocation prefixes skills but not templates", () => {
+    assert.equal(commandInvocation("skill", "pdf"), "/skill:pdf");
+    assert.equal(commandInvocation("prompt", "review"), "/review");
+});
+
+test("skillScaffold emits the required frontmatter fields", () => {
+    const md = skillScaffold("pdf-tools", "Extracts text from PDFs. Use for PDF work.");
+    assert.match(md, /^---\nname: pdf-tools\n/);
+    assert.match(md, /\ndescription: .+\n---\n/);
+});
+
+test("scaffold frontmatter quotes descriptions that would break YAML", () => {
+    for (const desc of ["a: b", "- leading dash", "#hash", 'has "quotes"', "line\nbreak"]) {
+        const body = skillScaffold("x", desc).split("---")[1];
+        const value = /description: (.*)/.exec(body)?.[1] ?? "";
+        assert.doesNotMatch(value, /\n/, "must stay on one line");
+        if (/^[-#]|: /.test(desc)) assert.ok(value.startsWith('"'), `${desc} must be quoted`);
+    }
+});
+
+test("promptScaffold includes argument-hint only when given", () => {
+    assert.doesNotMatch(promptScaffold("r", "Review", ""), /argument-hint/);
+    assert.doesNotMatch(promptScaffold("r", "Review", "   "), /argument-hint/);
+    assert.match(promptScaffold("r", "Review", "<PR-URL>"), /argument-hint: "<PR-URL>"/);
+});
+
+test("isPiCommand recognises what pi expands itself", () => {
+    for (const m of ["/review", "/review staged", "/skill:pdf-tools", "/skill:pdf extract", "  /review"]) {
+        assert.ok(isPiCommand(m), m);
+    }
+});
+
+test("isPiCommand ignores prose that merely contains a slash", () => {
+    for (const m of ["", "hello", "what does / do", "a/b", "//comment", "/ spaced", "/-bad"]) {
+        assert.equal(isPiCommand(m), false, JSON.stringify(m));
+    }
+});
+
+test("normalizePiCommand reads pi 0.84.4's nested sourceInfo", () => {
+    // The RPC docs show flat path/location; the shipped build nests them.
+    const c = normalizePiCommand({
+        name: "skill:caveman", description: " Ultra-compressed. ", source: "skill",
+        sourceInfo: { path: "/home/u/.agents/skills/caveman/SKILL.md", scope: "user" },
+    });
+    assert.equal(c.path, "/home/u/.agents/skills/caveman/SKILL.md");
+    assert.equal(c.scope, "user");
+    assert.equal(c.description, "Ultra-compressed.", "description is trimmed");
+});
+
+test("normalizePiCommand still reads the documented flat shape", () => {
+    const c = normalizePiCommand({
+        name: "fix-tests", source: "prompt", location: "project", path: "/p/.pi/prompts/fix-tests.md",
+    });
+    assert.equal(c.scope, "project");
+    assert.equal(c.path, "/p/.pi/prompts/fix-tests.md");
+});
+
+test("normalizePiCommand tolerates a command with no origin at all", () => {
+    const c = normalizePiCommand({ name: "x", source: "extension" });
+    assert.equal(c.path, "");
+    assert.equal(c.scope, "");
+    assert.equal(c.description, "");
+});
