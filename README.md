@@ -1,10 +1,17 @@
 # Metwally Coding Agent
 
-A VS Code front-end for the `pi` coding agent, wired to a self-hosted model.
+A VS Code front-end for the `pi` coding agent, built for self-hosted models.
+
+- **Any OpenAI-compatible server** — vLLM, Ollama, llama.cpp, LM Studio, LiteLLM.
+  Point it at a URL; no hosted API account required.
+- **Zero-dependency webview** — its own streaming Markdown renderer and syntax
+  highlighter, no bundler, no npm UI stack.
+- **Full agent stream** — text, reasoning, tool calls and diffs, rendered live
+  over pi's line-delimited JSON RPC.
 
 The extension speaks pi's line-delimited JSON RPC over stdio and renders the
-agent's stream — text, reasoning, tool calls, diffs — in a webview that lives
-either in the activity bar or as an editor tab.
+agent's stream in a webview that lives either in the activity bar or as an
+editor tab.
 
 ---
 
