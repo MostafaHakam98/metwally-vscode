@@ -7,6 +7,8 @@ import { PiRpcClient, UsageInfo } from "./rpc-client";
 import {
     CommandKind, CommandScope, commandDir, commandFile, commandInvocation,
     estimateTokens, expandPath as expandPathIn, filePathFromArgs as filePathFromArgsIn,
+    applyLinkSelection, harnessCandidates, HarnessSource, linkedFrom, settingsPathFor,
+    historyFromMessages, StoredMessage,
     humanBytes, isPiCommand, lineDelta, normalizePiCommand, PiCommandInfo,
     promptScaffold, RawPiCommand, relativeTime, skillScaffold,
     slugify, textOf, titleFromPrompt, truncateForContext, validateCommandName,
@@ -534,17 +536,7 @@ class ChatSession {
                 break;
 
             case "switch-session":
-                try {
-                    await this.ensureClient().send(
-                        { type: "switch_session", sessionPath: msg.path } as never,
-                        cfg("startupTimeoutMs", 30_000),
-                    );
-                    this.sentAutoContext = false;
-                    this.broadcast({ type: "clear" });
-                    this.sendPins();
-                } catch (err) {
-                    this.broadcast({ type: "error", text: (err as Error).message });
-                }
+                await this.switchSession(String(msg.path ?? ""));
                 break;
 
             case "attach-file":
@@ -593,6 +585,10 @@ class ChatSession {
 
             case "browse-commands":
                 await vscode.commands.executeCommand(`${CFG}.browseCommands`);
+                break;
+
+            case "import-harness":
+                await vscode.commands.executeCommand(`${CFG}.importHarnessResources`);
                 break;
 
             case "new-skill":
@@ -757,6 +753,56 @@ class ChatSession {
             await this.ensureClient().send(cmd as never, cfg("requestTimeoutMs", 600_000));
         } catch (err) {
             this.broadcast({ type: "error", text: (err as Error).message });
+            this.setBusy(false);
+        }
+    }
+
+    /**
+     * Load a previous session and replay it into the view.
+     *
+     * Switching alone only rebinds the agent — without pulling the messages
+     * back the transcript was cleared and left empty, so picking a session
+     * from the history list looked like nothing had happened. pi also takes
+     * several seconds to rebuild cwd-bound state, hence the progress notice
+     * and the longer timeout.
+     */
+    async switchSession(sessionPath: string): Promise<void> {
+        if (!sessionPath) return;
+        this.broadcast({ type: "loading", text: "Loading session…" });
+        this.setBusy(true);
+        try {
+            const res = await this.ensureClient().send(
+                { type: "switch_session", sessionPath } as never,
+                Math.max(cfg("startupTimeoutMs", 30_000), 60_000),
+            );
+            if ((res.data as { cancelled?: boolean } | undefined)?.cancelled) {
+                this.broadcast({ type: "loading", text: "" });
+                this.broadcast({ type: "toast", kind: "err", text: "Session switch was cancelled" });
+                return;
+            }
+
+            const msgRes = await this.client?.send({ type: "get_messages" } as never, 60_000);
+            const messages = ((msgRes?.data ?? {}) as { messages?: StoredMessage[] }).messages ?? [];
+            const history = historyFromMessages(messages, cfg("promptPreamble", ""));
+
+            this.sentAutoContext = false;
+            this.titled = false;
+            this.usage = null;
+            this.edits.clear();
+            this.snapshots.clear();
+            this.broadcast({ type: "history", messages: history });
+            this.sendPins();
+            this.sendEdits();
+
+            const first = history.find((h) => h.role === "user");
+            if (first) this.nameFromPrompt(first.text);
+            log(`switched session: ${sessionPath} (${history.length} messages)`);
+            void this.refreshStats();
+            void this.publishCommands();
+        } catch (err) {
+            this.broadcast({ type: "loading", text: "" });
+            this.broadcast({ type: "error", title: "Cannot open session", text: (err as Error).message });
+        } finally {
             this.setBusy(false);
         }
     }
@@ -1449,10 +1495,147 @@ async function createCommand(kind: CommandKind): Promise<string | null> {
     return file;
 }
 
+/** Read pi's settings.json, tolerating a missing or malformed file. */
+function readPiSettings(file: string): Record<string, unknown> {
+    try {
+        return JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    } catch (err) {
+        if (fs.existsSync(file)) log(`settings.json unreadable (${file}): ${(err as Error).message}`);
+        return {};
+    }
+}
+
+/** Directories that exist and hold at least one entry, with a count for the picker. */
+function availableHarnessSources(): Array<HarnessSource & { count: number }> {
+    const out: Array<HarnessSource & { count: number }> = [];
+    for (const src of harnessCandidates(os.homedir(), workingDir())) {
+        try {
+            if (!fs.statSync(src.dir).isDirectory()) continue;
+            const count = fs.readdirSync(src.dir).filter((f) => !f.startsWith(".")).length;
+            if (count) out.push({ ...src, count });
+        } catch { /* not present */ }
+    }
+    return out;
+}
+
+/**
+ * Link another harness's skill and command directories into pi.
+ *
+ * pi reads whole directories from the `skills` and `prompts` settings arrays,
+ * and Claude Code / Codex already use the Agent Skills layout and the same
+ * $1/$ARGUMENTS template syntax — so nothing is copied or rewritten and edits
+ * on either side stay in sync.
+ */
+async function importHarnessResources(mgr: SessionManager): Promise<void> {
+    const sources = availableHarnessSources();
+    if (!sources.length) {
+        void vscode.window.showInformationMessage(
+            "Metwally: found no Claude Code or Codex skill or command directories to import. "
+            + "Checked ~/.claude, ~/.codex and the same folders in this project.",
+        );
+        return;
+    }
+
+    const scopePick = await vscode.window.showQuickPick(
+        [
+            {
+                label: "$(globe) Global",
+                description: "~/.pi/agent/settings.json",
+                detail: "Available in every project",
+                scope: "global" as CommandScope,
+            },
+            {
+                label: "$(root-folder) This project",
+                description: ".pi/settings.json",
+                detail: "Checked in with the repo — needs piVscode.trustProject",
+                scope: "project" as CommandScope,
+            },
+        ],
+        { title: "Import skills and commands — where should the link be written?" },
+    );
+    if (!scopePick) return;
+
+    if (scopePick.scope === "project" && !cfg("trustProject", false)) {
+        const choice = await vscode.window.showWarningMessage(
+            "pi ignores .pi/settings.json in RPC mode unless piVscode.trustProject is on, so a project "
+            + "link would have no effect. Enabling trust also lets pi run this project's extensions.",
+            { modal: true }, "Enable project trust", "Use global instead",
+        );
+        if (choice === "Enable project trust") {
+            await vscode.workspace.getConfiguration(CFG).update(
+                "trustProject", true, vscode.ConfigurationTarget.Workspace);
+        } else if (choice === "Use global instead") {
+            scopePick.scope = "global";
+        } else {
+            return;
+        }
+    }
+
+    const file = settingsPathFor(scopePick.scope, os.homedir(), workingDir());
+    const settings = readPiSettings(file);
+    const current = {
+        skills: Array.isArray(settings.skills) ? settings.skills as string[] : [],
+        prompts: Array.isArray(settings.prompts) ? settings.prompts as string[] : [],
+    };
+    const managed = {
+        skills: sources.filter((s) => s.kind === "skills").map((s) => s.dir),
+        prompts: sources.filter((s) => s.kind === "prompts").map((s) => s.dir),
+    };
+    const alreadyLinked = new Set([
+        ...linkedFrom(current.skills, managed.skills, os.homedir()),
+        ...linkedFrom(current.prompts, managed.prompts, os.homedir()),
+    ]);
+
+    const items = sources.map((s) => ({
+        label: `${s.harness === "Codex" ? "$(circuit-board)" : "$(sparkle)"} ${s.label}`,
+        description: `${s.count} ${s.count === 1 ? "entry" : "entries"}`,
+        detail: s.detail,
+        picked: alreadyLinked.has(s.dir),
+        src: s,
+    }));
+
+    const picked = await vscode.window.showQuickPick(items, {
+        title: `Import into ${scopePick.scope} settings — linked, not copied`,
+        placeHolder: "Checked directories are linked; unchecking removes the link",
+        canPickMany: true,
+    });
+    if (!picked) return;
+
+    const chosen = new Set(picked.map((p) => p.src.dir));
+    const next = {
+        skills: applyLinkSelection(current.skills, managed.skills,
+            managed.skills.filter((d) => chosen.has(d)), os.homedir()),
+        prompts: applyLinkSelection(current.prompts, managed.prompts,
+            managed.prompts.filter((d) => chosen.has(d)), os.homedir()),
+    };
+
+    // Keep every other key, and drop the arrays entirely when they end up empty.
+    const merged: Record<string, unknown> = { ...settings };
+    for (const key of ["skills", "prompts"] as const) {
+        if (next[key].length) merged[key] = next[key];
+        else delete merged[key];
+    }
+
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}
+`, "utf8");
+    } catch (err) {
+        void vscode.window.showErrorMessage(`Metwally: cannot write ${file} — ${(err as Error).message}`);
+        return;
+    }
+
+    log(`import: ${file} skills=${JSON.stringify(next.skills)} prompts=${JSON.stringify(next.prompts)}`);
+    const total = next.skills.length + next.prompts.length;
+    await offerRestart(mgr, total
+        ? `${total} director${total === 1 ? "y" : "ies"} linked into pi`
+        : "Links removed");
+}
+
 /** Skills and templates are scanned when pi starts, so a new one needs a restart. */
 async function offerRestart(mgr: SessionManager, what: string): Promise<void> {
     const pick = await vscode.window.showInformationMessage(
-        `${what} created. pi discovers commands at startup — restart the agent to pick it up?`,
+        `${what}. pi discovers commands at startup — restart the agent to pick this up?`,
         "Restart Agent", "Later",
     );
     if (pick === "Restart Agent") mgr.restartAll();
@@ -1464,8 +1647,9 @@ async function browseCommands(mgr: SessionManager): Promise<void> {
     if (!commands.length) {
         const pick = await vscode.window.showInformationMessage(
             "Metwally: pi reports no skills, prompt templates or extension commands.",
-            "New Skill", "New Prompt Template",
+            "Import from Claude/Codex", "New Skill", "New Prompt Template",
         );
+        if (pick === "Import from Claude/Codex") await importHarnessResources(mgr);
         if (pick === "New Skill") await newCommandFlow(mgr, "skill");
         if (pick === "New Prompt Template") await newCommandFlow(mgr, "prompt");
         return;
@@ -1523,7 +1707,7 @@ async function browseCommands(mgr: SessionManager): Promise<void> {
 
 async function newCommandFlow(mgr: SessionManager, kind: CommandKind): Promise<void> {
     const file = await createCommand(kind);
-    if (file) await offerRestart(mgr, kind === "skill" ? "Skill" : "Prompt template");
+    if (file) await offerRestart(mgr, `${kind === "skill" ? "Skill" : "Prompt template"} created`);
 }
 
 // =============================================================================
@@ -1809,6 +1993,7 @@ export function activate(context: vscode.ExtensionContext): void {
     reg("newSkill", () => newCommandFlow(mgr, "skill"));
     reg("newPromptTemplate", () => newCommandFlow(mgr, "prompt"));
     reg("browseCommands", () => browseCommands(mgr));
+    reg("importHarnessResources", () => importHarnessResources(mgr));
     reg("openSettings", () =>
         vscode.commands.executeCommand("workbench.action.openSettings", "@ext:local.pi-vscode"));
 

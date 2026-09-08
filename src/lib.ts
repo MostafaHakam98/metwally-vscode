@@ -273,3 +273,173 @@ export function normalizePiCommand(raw: RawPiCommand): PiCommandInfo {
         path: raw.path ?? raw.sourceInfo?.path ?? "",
     };
 }
+
+// -----------------------------------------------------------------------------
+// Importing resources from other agent harnesses
+//
+// pi already loads whole directories through the `skills` and `prompts` arrays
+// in settings.json, and Claude Code / Codex use the same Agent Skills layout
+// and $1/$ARGUMENTS template syntax. So importing means linking a directory,
+// not copying and converting files — edits on either side stay in sync.
+// -----------------------------------------------------------------------------
+
+export type HarnessKind = "skills" | "prompts";
+
+export interface HarnessSource {
+    /** Stable id, used to match a source against what is already linked. */
+    id: string;
+    harness: string;
+    kind: HarnessKind;
+    /** Absolute directory on disk. */
+    dir: string;
+    label: string;
+    detail: string;
+}
+
+/**
+ * Directories worth offering. pi already scans `~/.agents/skills`,
+ * `~/.pi/agent/*` and project `.agents/skills` on its own, so those are
+ * deliberately absent — linking them would be a no-op.
+ */
+export function harnessCandidates(home: string, workDir: string): HarnessSource[] {
+    const mk = (
+        harness: string, kind: HarnessKind, dir: string, label: string, detail: string,
+    ): HarnessSource => ({ id: `${harness}:${kind}:${dir}`, harness, kind, dir, label, detail });
+
+    return [
+        mk("Claude Code", "skills", path.join(home, ".claude", "skills"),
+            "Claude Code skills", "Global — ~/.claude/skills"),
+        mk("Claude Code", "prompts", path.join(home, ".claude", "commands"),
+            "Claude Code slash commands", "Global — ~/.claude/commands, loaded as prompt templates"),
+        mk("Codex", "skills", path.join(home, ".codex", "skills"),
+            "Codex skills", "Global — ~/.codex/skills"),
+        mk("Codex", "prompts", path.join(home, ".codex", "prompts"),
+            "Codex prompts", "Global — ~/.codex/prompts, loaded as prompt templates"),
+        mk("Claude Code", "skills", path.join(workDir, ".claude", "skills"),
+            "Claude Code skills (this project)", "Project — .claude/skills"),
+        mk("Claude Code", "prompts", path.join(workDir, ".claude", "commands"),
+            "Claude Code slash commands (this project)", "Project — .claude/commands"),
+        mk("Codex", "skills", path.join(workDir, ".codex", "skills"),
+            "Codex skills (this project)", "Project — .codex/skills"),
+        mk("Codex", "prompts", path.join(workDir, ".codex", "prompts"),
+            "Codex prompts (this project)", "Project — .codex/prompts"),
+    ];
+}
+
+/** Store `~/...` where possible; pi resolves it and it survives a moved home. */
+export function tildify(p: string, home: string): string {
+    if (!home || !p.startsWith(home)) return p;
+    const rest = p.slice(home.length).replace(/^[/\\]/, "");
+    return rest ? `~/${rest}` : "~";
+}
+
+export function untildify(p: string, home: string): string {
+    if (p === "~") return home;
+    return p.startsWith("~/") ? path.join(home, p.slice(2)) : p;
+}
+
+export function settingsPathFor(scope: CommandScope, home: string, workDir: string): string {
+    return scope === "global"
+        ? path.join(home, ".pi", "agent", "settings.json")
+        : path.join(workDir, ".pi", "settings.json");
+}
+
+/**
+ * Apply a selection to one settings array.
+ *
+ * Entries the user added by hand are preserved: only paths that this importer
+ * knows about (`managed`) are removed when deselected, so the multi-select acts
+ * as a toggle rather than overwriting the array.
+ */
+export function applyLinkSelection(
+    existing: string[], managed: string[], selected: string[], home: string,
+): string[] {
+    const norm = (p: string) => path.normalize(untildify(p, home)).replace(/[/\\]+$/, "");
+    const managedSet = new Set(managed.map(norm));
+    const kept = (existing ?? []).filter((e) => !managedSet.has(norm(e)));
+    const out = [...kept];
+    for (const s of selected) {
+        const tilde = tildify(s, home);
+        if (!out.some((e) => norm(e) === norm(tilde))) out.push(tilde);
+    }
+    return out;
+}
+
+/** Which managed directories a settings array currently links. */
+export function linkedFrom(existing: string[], managed: string[], home: string): string[] {
+    const norm = (p: string) => path.normalize(untildify(p, home)).replace(/[/\\]+$/, "");
+    const have = new Set((existing ?? []).map(norm));
+    return managed.filter((m) => have.has(norm(m)));
+}
+
+// -----------------------------------------------------------------------------
+// Session history
+// -----------------------------------------------------------------------------
+
+export interface StoredMessage {
+    role: string;
+    content?: unknown;
+}
+
+export interface HistoryEntry {
+    role: "user" | "assistant";
+    text: string;
+}
+
+/** Join the text blocks of one stored message, ignoring thinking and tool calls. */
+export function messageText(msg: StoredMessage): string {
+    const c = msg?.content;
+    if (typeof c === "string") return c;
+    if (!Array.isArray(c)) return "";
+    return c
+        .filter((b): b is { type: string; text?: string } =>
+            !!b && typeof b === "object" && (b as { type?: string }).type === "text")
+        .map((b) => b.text ?? "")
+        .join("");
+}
+
+/**
+ * Turn a restored session into something renderable.
+ *
+ * Tool results and reasoning are dropped: they are not persisted per-turn by
+ * the view, and replaying them out of order would misrepresent the session.
+ * The preamble and any context blocks this extension prepended are stripped so
+ * a restored prompt reads as what the user typed.
+ */
+export function historyFromMessages(
+    messages: StoredMessage[], preamble: string, limit = 4000,
+): HistoryEntry[] {
+    const out: HistoryEntry[] = [];
+    for (const m of messages ?? []) {
+        const role = m?.role === "user" ? "user" : m?.role === "assistant" ? "assistant" : null;
+        if (!role) continue;
+        let text = messageText(m).trim();
+        if (!text) continue;
+        if (role === "user") text = stripInjectedContext(text, preamble);
+        if (!text) continue;
+        if (text.length > limit) text = `${text.slice(0, limit)}\n\n_… truncated_`;
+        out.push({ role, text });
+    }
+    return out;
+}
+
+/**
+ * Remove what submit() prepends: the configured preamble, a reasoning marker
+ * from older sessions, and any `--- name ---` context sections.
+ */
+export function stripInjectedContext(text: string, preamble: string): string {
+    let out = text;
+    const p = (preamble ?? "").trim();
+    if (p && out.startsWith(p)) out = out.slice(p.length);
+    out = out.replace(/^\s*\[reasoning: \w+\]\s*/, "");
+    // Context sections are emitted as "--- name ---" followed by a file body.
+    // The user's own text is whatever follows the last one.
+    const marks = [...out.matchAll(/^--- .+ ---$/gm)];
+    if (marks.length) {
+        const last = marks[marks.length - 1];
+        const after = out.slice((last.index ?? 0) + last[0].length);
+        const blank = after.indexOf("\n\n");
+        if (blank !== -1) out = after.slice(blank + 2);
+    }
+    return out.trim();
+}

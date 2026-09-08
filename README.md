@@ -92,6 +92,10 @@ collapsed.
 - `Ctrl+Alt+N` opens a new tab. `piVscode.maxSessions` (default `4`) caps how
   many, because concurrent turns contend for one model server.
 - Tabs are named after their first prompt.
+- `/history` reopens a previous session: pi rebinds to the session file and the
+  transcript is replayed from `get_messages`. Only the prose comes back —
+  reasoning and tool output are not re-rendered — and a switch takes a few
+  seconds, so a progress note is shown while it runs.
 - **Open Current Session in Editor** mirrors the sidebar conversation into a
   tab; both views stay in sync and closing the mirror leaves the session alive.
 - Closing a tab kills that session's `pi` process.
@@ -232,6 +236,7 @@ All under `piVscode.*`:
 
 | Key | Default | Purpose |
 |---|---|---|
+| `reviewEdits` | `true` | Offer a diff and revert for files a tool changed |
 | `showThinking` | `collapsed` | `always` \| `collapsed` \| `hidden` |
 | `confirmNewSession` | `true` | Confirm before discarding a transcript |
 | `maxSessions` | `4` | Maximum chat tabs; the sidebar does not count |

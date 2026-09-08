@@ -267,3 +267,159 @@ test("normalizePiCommand tolerates a command with no origin at all", () => {
     assert.equal(c.scope, "");
     assert.equal(c.description, "");
 });
+
+// -----------------------------------------------------------------------------
+// Harness import
+// -----------------------------------------------------------------------------
+
+import {
+    applyLinkSelection, harnessCandidates, linkedFrom, settingsPathFor, tildify, untildify,
+} from "../src/lib";
+
+test("harnessCandidates covers Claude and Codex, globally and per project", () => {
+    const c = harnessCandidates("/home/u", "/w/proj");
+    const dirs = c.map((s) => s.dir);
+    for (const d of ["/home/u/.claude/skills", "/home/u/.claude/commands",
+                     "/home/u/.codex/skills", "/home/u/.codex/prompts",
+                     "/w/proj/.claude/skills", "/w/proj/.claude/commands"]) {
+        assert.ok(dirs.includes(d), `missing ${d}`);
+    }
+});
+
+test("harnessCandidates omits directories pi already scans natively", () => {
+    // Linking these would be a no-op and would imply pi was not reading them.
+    const dirs = harnessCandidates("/home/u", "/w/proj").map((s) => s.dir);
+    for (const d of ["/home/u/.agents/skills", "/home/u/.pi/agent/skills",
+                     "/home/u/.pi/agent/prompts", "/w/proj/.agents/skills"]) {
+        assert.ok(!dirs.includes(d), `${d} should not be offered`);
+    }
+});
+
+test("harnessCandidates maps commands to prompts and skills to skills", () => {
+    const c = harnessCandidates("/home/u", "/w/proj");
+    assert.equal(c.find((s) => s.dir === "/home/u/.claude/commands")?.kind, "prompts");
+    assert.equal(c.find((s) => s.dir === "/home/u/.claude/skills")?.kind, "skills");
+});
+
+test("harnessCandidates gives every source a unique id", () => {
+    const ids = harnessCandidates("/home/u", "/w/proj").map((s) => s.id);
+    assert.equal(new Set(ids).size, ids.length);
+});
+
+test("tildify and untildify round-trip a home-relative path", () => {
+    assert.equal(tildify("/home/u/.claude/skills", "/home/u"), "~/.claude/skills");
+    assert.equal(tildify("/home/u", "/home/u"), "~");
+    assert.equal(tildify("/opt/skills", "/home/u"), "/opt/skills", "outside home stays absolute");
+    assert.equal(untildify("~/.claude/skills", "/home/u"), "/home/u/.claude/skills");
+    assert.equal(untildify("~", "/home/u"), "/home/u");
+    assert.equal(untildify("/opt/x", "/home/u"), "/opt/x");
+});
+
+test("settingsPathFor matches pi's documented settings files", () => {
+    assert.equal(settingsPathFor("global", "/home/u", "/w"), "/home/u/.pi/agent/settings.json");
+    assert.equal(settingsPathFor("project", "/home/u", "/w"), "/w/.pi/settings.json");
+});
+
+test("applyLinkSelection adds a selected directory as a tilde path", () => {
+    const out = applyLinkSelection([], ["/home/u/.claude/skills"], ["/home/u/.claude/skills"], "/home/u");
+    assert.deepEqual(out, ["~/.claude/skills"]);
+});
+
+test("applyLinkSelection preserves entries the user added by hand", () => {
+    const out = applyLinkSelection(
+        ["/opt/my-own-skills", "~/.claude/skills"],
+        ["/home/u/.claude/skills"], ["/home/u/.claude/skills"], "/home/u");
+    assert.ok(out.includes("/opt/my-own-skills"), "hand-written entry must survive");
+    assert.equal(out.filter((e) => e.includes(".claude/skills")).length, 1, "no duplicate");
+});
+
+test("applyLinkSelection removes only managed paths when deselected", () => {
+    const out = applyLinkSelection(
+        ["/opt/mine", "~/.claude/skills"], ["/home/u/.claude/skills"], [], "/home/u");
+    assert.deepEqual(out, ["/opt/mine"]);
+});
+
+test("applyLinkSelection treats tilde, absolute and trailing-slash forms as one", () => {
+    const out = applyLinkSelection(
+        ["/home/u/.claude/skills/"], ["/home/u/.claude/skills"], ["/home/u/.claude/skills"], "/home/u");
+    assert.equal(out.length, 1, "must not double-link the same directory");
+});
+
+test("linkedFrom reports which managed directories are already linked", () => {
+    const managed = ["/home/u/.claude/skills", "/home/u/.codex/skills"];
+    assert.deepEqual(linkedFrom(["~/.claude/skills"], managed, "/home/u"), ["/home/u/.claude/skills"]);
+    assert.deepEqual(linkedFrom([], managed, "/home/u"), []);
+});
+
+// -----------------------------------------------------------------------------
+// Session history
+// -----------------------------------------------------------------------------
+
+import { historyFromMessages, messageText, stripInjectedContext } from "../src/lib";
+
+const PREAMBLE = "[IMPORTANT: After thinking, you MUST produce a clear, concise final answer. Never leave it empty.]";
+
+test("messageText joins text blocks and ignores thinking and tool calls", () => {
+    assert.equal(messageText({ role: "assistant", content: [
+        { type: "thinking", text: "hmm" },
+        { type: "text", text: "Hello " },
+        { type: "toolCall", name: "bash" },
+        { type: "text", text: "world" },
+    ] } as never), "Hello world");
+});
+
+test("messageText handles a plain string and missing content", () => {
+    assert.equal(messageText({ role: "user", content: "hi" }), "hi");
+    assert.equal(messageText({ role: "user" }), "");
+    assert.equal(messageText({ role: "user", content: null } as never), "");
+});
+
+test("historyFromMessages keeps only user and assistant prose", () => {
+    // Real shape from a pi session: 44 messages, mostly toolResult.
+    const out = historyFromMessages([
+        { role: "user", content: [{ type: "text", text: "do a thing" }] },
+        { role: "assistant", content: [{ type: "thinking", text: "..." }, { type: "toolCall" }] },
+        { role: "toolResult", content: [{ type: "text", text: "total 160" }] },
+        { role: "assistant", content: [{ type: "text", text: "Done." }] },
+    ] as never, PREAMBLE);
+    assert.deepEqual(out, [
+        { role: "user", text: "do a thing" },
+        { role: "assistant", text: "Done." },
+    ]);
+});
+
+test("historyFromMessages strips the preamble the extension prepends", () => {
+    const out = historyFromMessages(
+        [{ role: "user", content: [{ type: "text", text: `${PREAMBLE}\n\nwhat changed?` }] }] as never,
+        PREAMBLE);
+    assert.deepEqual(out, [{ role: "user", text: "what changed?" }]);
+});
+
+test("historyFromMessages truncates a very long message", () => {
+    const out = historyFromMessages(
+        [{ role: "user", content: [{ type: "text", text: "x".repeat(9000) }] }] as never, "", 100);
+    assert.ok(out[0].text.length < 200);
+    assert.match(out[0].text, /truncated/);
+});
+
+test("historyFromMessages drops messages that are empty after stripping", () => {
+    const out = historyFromMessages([
+        { role: "user", content: [{ type: "text", text: PREAMBLE }] },
+        { role: "assistant", content: [{ type: "text", text: "   " }] },
+    ] as never, PREAMBLE);
+    assert.deepEqual(out, []);
+});
+
+test("stripInjectedContext removes an old reasoning marker", () => {
+    assert.equal(stripInjectedContext("[reasoning: high]\n\nfix it", ""), "fix it");
+});
+
+test("stripInjectedContext removes attached file sections", () => {
+    const raw = `${PREAMBLE}\n\n--- src/a.ts ---\nconst a = 1;\nconst b = 2;\n\nexplain this`;
+    assert.equal(stripInjectedContext(raw, PREAMBLE), "explain this");
+});
+
+test("stripInjectedContext leaves an ordinary prompt untouched", () => {
+    assert.equal(stripInjectedContext("just a question", PREAMBLE), "just a question");
+    assert.equal(stripInjectedContext("a --- b --- c", PREAMBLE), "a --- b --- c");
+});

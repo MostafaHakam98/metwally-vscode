@@ -146,6 +146,23 @@
         });
     }
 
+    /* Switching sessions takes pi several seconds; without this the click
+       looked like it had done nothing at all. */
+    function showLoading(text) {
+        closeLoading();
+        var d = document.createElement("div");
+        d.className = "loading-note";
+        d.id = "loading-note";
+        d.innerHTML = '<span class="spin">' + svg("i-refresh") + "</span><span>" + esc(text) + "</span>";
+        stream.appendChild(d);
+        scroll(true);
+    }
+
+    function closeLoading() {
+        var n = document.getElementById("loading-note");
+        if (n) n.remove();
+    }
+
     function welcome() {
         if (S.piMissing) { welcomeMissingPi(); return; }
         var ctx = S.contextWindow ? fmtNum(S.contextWindow) + " context" : "";
@@ -376,6 +393,8 @@
             "</button>" +
             '<div class="tool-body"><div><pre class="tool-out scroll"></pre></div></div>';
         d.querySelector(".tool-name").textContent = name || "tool";
+        // Lets the stylesheet treat a shell command differently from a file op.
+        d.dataset.tool = String(name || "tool").toLowerCase();
         var summary = summarizeArgs(name, args);
         var argsEl = d.querySelector(".tool-args");
         if (!/\s/.test(summary) && /[/.]/.test(summary)) argsEl.classList.add("path");
@@ -821,6 +840,7 @@
         { name: "/settings", icon: "i-gear",     desc: "Open Metwally settings",          run: function () { post("open-settings"); } },
         { name: "/help",     icon: "i-info",     desc: "Keyboard shortcuts and tips",     run: function () { helpModal(); } },
         { name: "/skills",   icon: "i-bulb",     desc: "Browse skills and commands",      run: function () { post("browse-commands"); } },
+        { name: "/import",   icon: "i-download", desc: "Import Claude/Codex skills",      run: function () { post("import-harness"); } },
         { name: "/new-skill", icon: "i-plus",    desc: "Create a skill",                  run: function () { post("new-skill"); } },
         { name: "/new-prompt", icon: "i-plus",   desc: "Create a prompt template",        run: function () { post("new-prompt"); } },
         { name: "/context",  icon: "i-scan",     desc: "Show what is in context",         run: function () { post("context-info"); } },
@@ -1205,23 +1225,36 @@
         if (typeof st.temp === "number") { S.temp = st.temp; $("temp").value = String(st.temp); }
         if (st.focus) toggleFocus();
         if (st.transcript && st.transcript.length) {
-            S.transcript = st.transcript;
-            stream.innerHTML = "";
-            st.transcript.forEach(function (t) {
-                if (t.role === "user") addUser(t.text, t.attachments);
-                else {
-                    var d = document.createElement("div");
-                    d.className = "turn msg-bot";
-                    d.innerHTML = '<div class="avatar">' + svg("i-bolt") + '</div><div class="body"><div class="md"></div></div>';
-                    d.querySelector(".md").innerHTML = MD.render(t.text);
-                    addTurnActions(d.querySelector(".body"), t.text);
-                    stream.appendChild(d);
-                }
-            });
-            scroll(true);
+            renderTranscript(st.transcript);
             return true;
         }
         return false;
+    }
+
+    /* Replays a finished conversation: restored view state, or a session picked
+       from /history. Live blocks (thinking, tools) are not persisted, so only
+       the prose is rebuilt. */
+    function renderTranscript(items) {
+        S.transcript = items.slice();
+        el.bot = null; el.text = null; el.raw = ""; el.segments = [];
+        el.think = null; el.tool = null;
+        stream.innerHTML = "";
+        items.forEach(function (t) {
+            if (t.role === "user") {
+                addUser(t.text, t.attachments);
+                S.lastPrompt = t.text;
+            } else {
+                var d = document.createElement("div");
+                d.className = "turn msg-bot";
+                d.innerHTML = '<div class="avatar">' + svg("i-bolt") + '</div><div class="body"><div class="md"></div></div>';
+                d.querySelector(".md").innerHTML = MD.render(t.text);
+                addTurnActions(d.querySelector(".body"), t.text);
+                stream.appendChild(d);
+            }
+        });
+        if (!items.length) welcome();
+        scroll(true);
+        persist();
     }
 
     function resetChat() {
@@ -1343,6 +1376,20 @@
 
             case "context-usage":
                 setContextUsage(m.usage);
+                break;
+
+            case "history":
+                closeLoading();
+                renderTranscript((m.messages || []).map(function (h) {
+                    return { role: h.role, text: h.text };
+                }));
+                toast((m.messages || []).length
+                    ? "Loaded " + m.messages.length + " message(s)"
+                    : "That session has no messages yet");
+                break;
+
+            case "loading":
+                if (m.text) showLoading(m.text); else closeLoading();
                 break;
 
             case "commands":

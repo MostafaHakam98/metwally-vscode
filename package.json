@@ -2,7 +2,7 @@
   "name": "pi-vscode",
   "displayName": "Metwally Coding Agent",
   "description": "Self-hosted coding agent for VS Code, powered by the pi CLI.",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -151,6 +151,12 @@
         "icon": "$(lightbulb)"
       },
       {
+        "command": "piVscode.importHarnessResources",
+        "title": "Import Skills from Claude Code or Codex...",
+        "category": "Metwally",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "piVscode.newSkill",
         "title": "New Skill...",
         "category": "Metwally",
@@ -231,6 +237,11 @@
           "command": "piVscode.newPromptTemplate",
           "when": "view == piVscode.chatView",
           "group": "2_author@2"
+        },
+        {
+          "command": "piVscode.importHarnessResources",
+          "when": "view == piVscode.chatView",
+          "group": "2_author@3"
         }
       ],
       "editor/context": [

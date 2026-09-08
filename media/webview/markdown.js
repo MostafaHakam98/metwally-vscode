@@ -98,12 +98,16 @@
 
     /* ------------------------------------------------------------- list tree */
 
-    function renderList(items) {
+    function renderList(items, loose) {
         var out = "";
         var i = 0;
         while (i < items.length) {
             var ordered = items[i].ordered;
             var tag = ordered ? "ol" : "ul";
+            // Honour an explicit start, so "3." does not render as "1.".
+            var first = items[i].num;
+            var attrs = (ordered && first > 1) ? ' start="' + first + '"' : "";
+            if (loose) attrs += ' class="loose"';
             var buf = "";
             while (i < items.length && items[i].ordered === ordered) {
                 var it = items[i];
@@ -112,10 +116,10 @@
                     ? '<span class="box">' + (it.checked ? ICON_CHECK : "") + "</span>"
                     : "";
                 buf += "<li" + cls + ">" + box + "<span>" + inline(it.text) +
-                    (it.children.length ? renderList(it.children) : "") + "</span></li>";
+                    (it.children.length ? renderList(it.children, it.childrenLoose) : "") + "</span></li>";
                 i++;
             }
-            out += "<" + tag + ">" + buf + "</" + tag + ">";
+            out += "<" + tag + attrs + ">" + buf + "</" + tag + ">";
         }
         return out;
     }
@@ -123,7 +127,25 @@
     function collectList(lines, start, baseIndent) {
         var items = [];
         var i = start;
+        var loose = false;
         while (i < lines.length) {
+            // A blank line does not end a list when the list continues after
+            // it. Treating it as a terminator started a fresh <ol> per item, so
+            // every item in a loose list rendered as "1.".
+            if (!lines[i].trim()) {
+                var j = i;
+                while (j < lines.length && !lines[j].trim()) j++;
+                if (j >= lines.length) break;
+                var la = /^(\s*)(?:[-*+]|\d{1,9}[.)])\s+/.exec(lines[j]);
+                var laIndent = la ? la[1].replace(/\t/g, "    ").length : -1;
+                var continues = la ? laIndent >= baseIndent
+                    : (items.length > 0 && /^\s{2,}\S/.test(lines[j]));
+                if (!continues) break;
+                loose = true;
+                if (!la) items[items.length - 1].text += "\n";
+                i = j;
+                continue;
+            }
             var m = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/.exec(lines[i]);
             if (!m) {
                 if (items.length && /^\s{2,}\S/.test(lines[i])) {
@@ -138,6 +160,7 @@
             if (indent > baseIndent && items.length) {
                 var sub = collectList(lines, i, indent);
                 items[items.length - 1].children = items[items.length - 1].children.concat(sub.items);
+                items[items.length - 1].childrenLoose = sub.loose;
                 i = sub.next;
                 continue;
             }
@@ -145,15 +168,17 @@
             var task = /^\[([ xX])\]\s+/.exec(text);
             items.push({
                 indent: indent,
+                num: m[3] ? parseInt(m[3], 10) : 0,
                 ordered: !!m[3],
                 task: !!task,
                 checked: !!task && task[1].toLowerCase() === "x",
                 text: task ? text.slice(task[0].length) : text,
-                children: []
+                children: [],
+                childrenLoose: false
             });
             i++;
         }
-        return { items: items, next: i };
+        return { items: items, next: i, loose: loose };
     }
 
     /* ---------------------------------------------------------------- blocks */
@@ -252,7 +277,7 @@
             if (/^(\s*)(?:[-*+]|\d{1,9}[.)])\s+/.test(line)) {
                 flushPara();
                 var res = collectList(lines, i, 0);
-                out += renderList(res.items);
+                out += renderList(res.items, res.loose);
                 i = res.next;
                 continue;
             }
