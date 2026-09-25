@@ -319,7 +319,8 @@
             "</button>" +
             '<div class="think-body-wrap"><div><div class="think-body scroll"></div></div></div>';
         if (S.showThinking === "always") d.classList.add("open");
-        closeText();
+        // pi can interleave thinking and text deltas within one message.
+        // Keep the text node open so a later text delta continues the same prose.
         body().appendChild(d);
         el.think = d;
         el.thinkRaw = "";
@@ -1319,7 +1320,6 @@
                 break;
 
             case "text-delta":
-                endThink();
                 if (!el.text) {
                     var host = document.createElement("div");
                     host.className = "md";

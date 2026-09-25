@@ -2,7 +2,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "path";
 import {
-    estimateTokens, expandPath, filePathFromArgs, humanBytes,
+    estimateTokens, expandPath, filePathFromArgs, finalAgentError, humanBytes,
     lineDelta, relativeTime, textOf, titleFromPrompt, truncateForContext,
 } from "../src/lib";
 
@@ -148,6 +148,21 @@ test("textOf tolerates missing result and missing content", () => {
     assert.equal(textOf(undefined), "");
     assert.equal(textOf({}), "");
     assert.equal(textOf({ content: [{ type: "text" }] }), "");
+});
+
+test("finalAgentError exposes pi's terminal retry failure", () => {
+    assert.equal(finalAgentError({
+        type: "auto_retry_end",
+        success: false,
+        attempt: 3,
+        finalError: "Connection error.",
+    }), "Connection error.");
+});
+
+test("finalAgentError ignores successful and non-terminal retry events", () => {
+    assert.equal(finalAgentError({ type: "auto_retry_start", errorMessage: "Connection error." }), null);
+    assert.equal(finalAgentError({ type: "auto_retry_end", success: true }), null);
+    assert.equal(finalAgentError({ type: "agent_settled" }), null);
 });
 
 // -----------------------------------------------------------------------------

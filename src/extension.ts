@@ -5,7 +5,7 @@ import * as fs from "fs";
 import { spawnSync } from "child_process";
 import { PiRpcClient, UsageInfo } from "./rpc-client";
 import {
-    CommandKind, CommandScope, commandDir, commandFile, commandInvocation,
+    CommandKind, CommandScope, commandDir, commandFile, commandInvocation, finalAgentError,
     estimateTokens, expandPath as expandPathIn, filePathFromArgs as filePathFromArgsIn,
     applyLinkSelection, harnessCandidates, HarnessSource, linkedFrom, settingsPathFor,
     historyFromMessages, StoredMessage,
@@ -437,6 +437,15 @@ class ChatSession {
                 this.broadcast({ type: "message-end" });
                 void this.refreshStats();
                 break;
+
+            case "auto_retry_end": {
+                const error = finalAgentError(ev);
+                if (error) {
+                    log(`agent error: ${error}`);
+                    this.broadcast({ type: "error", title: "Agent request failed", text: error });
+                }
+                break;
+            }
 
             case "message_update": {
                 if (ev.usage) this.setUsage(ev.usage);
@@ -1210,6 +1219,8 @@ interface AnyEvent {
     toolName?: string;
     args?: Record<string, unknown>;
     isError?: boolean;
+    success?: boolean;
+    finalError?: unknown;
     message?: unknown;
     partialResult?: { content?: Array<{ type: string; text?: string }> };
     result?: { content?: Array<{ type: string; text?: string }> };

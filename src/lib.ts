@@ -122,6 +122,17 @@ export function textOf(result?: { content?: Array<{ type: string; text?: string 
     return result.content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
 }
 
+/** Return the user-facing error from pi after automatic retries are exhausted. */
+export function finalAgentError<T extends {
+    type?: unknown;
+    success?: unknown;
+    finalError?: unknown;
+}>(event: T): string | null {
+    if (event.type !== "auto_retry_end" || event.success !== false) return null;
+    if (typeof event.finalError !== "string") return "Agent request failed after retries.";
+    return event.finalError.trim() || "Agent request failed after retries.";
+}
+
 // -----------------------------------------------------------------------------
 // Skills and prompt templates
 //
