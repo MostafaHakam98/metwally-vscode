@@ -438,3 +438,216 @@ test("stripInjectedContext leaves an ordinary prompt untouched", () => {
     assert.equal(stripInjectedContext("just a question", PREAMBLE), "just a question");
     assert.equal(stripInjectedContext("a --- b --- c", PREAMBLE), "a --- b --- c");
 });
+
+// -----------------------------------------------------------------------------
+// Importing chats from other agent harnesses
+// -----------------------------------------------------------------------------
+
+import {
+    claudeProjectDir, cwdFromDashed, harnessSessions, HarnessFs,
+    parseClaudeTranscript, parseCodexTranscript, stripHarnessInjected,
+} from "../src/lib";
+
+test("parseClaudeTranscript keeps only human user and assistant prose", () => {
+    const lines = [
+        JSON.stringify({ type: "queue-operation", operation: "enqueue" }),
+        JSON.stringify({
+            type: "user", isSidechain: false, origin: { kind: "human" },
+            message: { role: "user", content: [{ type: "text", text: "fix the build" }] },
+        }),
+        JSON.stringify({
+            type: "assistant", isSidechain: false,
+            message: {
+                role: "assistant",
+                content: [
+                    { type: "thinking", text: "thinking..." },
+                    { type: "text", text: "On it. " },
+                    { type: "tool_use", name: "bash", input: {} },
+                    { type: "text", text: "Fixed." },
+                ],
+            },
+        }),
+        // A tool result is a user-typed record but not from a human: dropped.
+        JSON.stringify({
+            type: "user", isSidechain: false, origin: { kind: "tool" },
+            message: { role: "user", content: [{ type: "tool_result", content: "exit 0" }] },
+        }),
+        // Sidechain (sub-agent) work is not the main conversation: dropped.
+        JSON.stringify({
+            type: "user", isSidechain: true,
+            message: { role: "user", content: [{ type: "text", text: "sidechain" }] },
+        }),
+        JSON.stringify({ type: "attachment", attachment: {} }),
+        JSON.stringify({ type: "ai-title", aiTitle: "title" }),
+        "not json at all",
+    ];
+    const out = parseClaudeTranscript(lines, PREAMBLE);
+    assert.deepEqual(out, [
+        { role: "user", text: "fix the build" },
+        { role: "assistant", text: "On it.\n\nFixed." },
+    ]);
+});
+
+test("parseClaudeTranscript returns null when nothing usable is present", () => {
+    const out = parseClaudeTranscript([
+        JSON.stringify({ type: "queue-operation" }),
+        JSON.stringify({ type: "user", isSidechain: true, message: { role: "user", content: [] } }),
+    ], PREAMBLE);
+    assert.equal(out, null);
+});
+
+test("parseCodexTranscript keeps user and assistant, drops developer and tools", () => {
+    const item = (type: string, payload: unknown) => JSON.stringify({ type, payload });
+    const lines = [
+        item("session_meta", { session_id: "x", cwd: "/w/proj" }),
+        item("event_msg", { type: "task_started" }),
+        item("response_item", {
+            type: "message", role: "developer",
+            content: [{ type: "input_text", text: "<skills_instructions>..." }],
+        }),
+        item("response_item", {
+            type: "message", role: "user",
+            content: [
+                { type: "input_text", text: "<recommended_plugins>noise</recommended_plugins>now write a summary" },
+                { type: "input_text", text: "of the stages" },
+            ],
+        }),
+        item("response_item", { type: "reasoning", summary: [] }),
+        item("response_item", { type: "function_call", name: "shell" }),
+        item("response_item", {
+            type: "message", role: "assistant",
+            content: [{ type: "output_text", text: "Done. Here is the summary." }],
+        }),
+        "broken line",
+    ];
+    const out = parseCodexTranscript(lines, PREAMBLE);
+    assert.deepEqual(out, [
+        { role: "user", text: "now write a summary\n\nof the stages" },
+        { role: "assistant", text: "Done. Here is the summary." },
+    ]);
+});
+
+test("parseCodexTranscript returns null for a session with only meta and events", () => {
+    const out = parseCodexTranscript([
+        JSON.stringify({ type: "session_meta", payload: {} }),
+        JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "hi" } }),
+    ], PREAMBLE);
+    assert.equal(out, null);
+});
+
+test("stripHarnessInjected removes a full envelope and an unterminated tail", () => {
+    assert.equal(
+        stripHarnessInjected("<system-reminder>env</system-reminder>do it"),
+        "do it");
+    assert.equal(
+        stripHarnessInjected("do it\n<system-reminder>env snapshot</system-reminder>"),
+        "do it");
+    assert.equal(
+        stripHarnessInjected("<recommended_plugins>x</recommended_plugins>real question"),
+        "real question");
+    assert.equal(stripHarnessInjected("plain text"), "plain text");
+});
+
+test("cwdFromDashed inverts Claude Code's dashed project name", () => {
+    assert.equal(cwdFromDashed("home-u-proj"), "/home/u/proj");
+    assert.equal(cwdFromDashed("-home-mostafahakam"), "/home/mostafahakam");
+});
+
+test("claudeProjectDir matches the directory Claude Code writes for a workspace", () => {
+    assert.equal(
+        claudeProjectDir("/home/u", "/home/u/Desktop/proj"),
+        "/home/u/.claude/projects/home-u-Desktop-proj");
+});
+
+/** A fake on-disk layout the harnessSessions scanner can be pointed at. */
+function fakeHarnessFs(): HarnessFs {
+    const home = "/home/u";
+    const files = new Map<string, string[]>();
+    files.set(`${home}/.claude/projects/home-u-Desktop-A/8e2e.jsonl`, [
+        JSON.stringify({ type: "ai-title", aiTitle: "Claude chat A" }),
+    ]);
+    files.set(`${home}/.claude/projects/home-u-Desktop-B/sess.jsonl`, [
+        JSON.stringify({
+            type: "user", isSidechain: false, origin: { kind: "human" },
+            message: { role: "user", content: [{ type: "text", text: "first words here" }] },
+        }),
+    ]);
+    // A Claude session that ran in workspace C, the workspace the tests open.
+    files.set(`${home}/.claude/projects/home-u-Desktop-C/own.jsonl`, [
+        JSON.stringify({ type: "ai-title", aiTitle: "Claude C (current workspace)" }),
+    ]);
+    files.set(`${home}/.codex/sessions/2026/08/17/rollout-2026-08-17T20.jsonl`, [
+        JSON.stringify({ type: "session_meta", payload: { cwd: "/home/u/Desktop/C" } }),
+        JSON.stringify({
+            type: "response_item",
+            payload: {
+                type: "message", role: "user",
+                content: [{ type: "input_text", text: "<recommended_plugins>x</recommended_plugins>codex first question" }],
+            },
+        }),
+    ]);
+    const times = new Map<string, number>([
+        [`${home}/.claude/projects/home-u-Desktop-A/8e2e.jsonl`, 3000],
+        [`${home}/.claude/projects/home-u-Desktop-B/sess.jsonl`, 1000],
+        [`${home}/.claude/projects/home-u-Desktop-C/own.jsonl`, 2000],
+        [`${home}/.codex/sessions/2026/08/17/rollout-2026-08-17T20.jsonl`, 5000],
+    ]);
+    const dirs = new Set([
+        home, `${home}/.claude`, `${home}/.claude/projects`,
+        `${home}/.claude/projects/home-u-Desktop-A`,
+        `${home}/.claude/projects/home-u-Desktop-B`,
+        `${home}/.claude/projects/home-u-Desktop-C`,
+        `${home}/.codex`, `${home}/.codex/sessions`,
+        `${home}/.codex/sessions/2026`, `${home}/.codex/sessions/2026/08`,
+        `${home}/.codex/sessions/2026/08/17`,
+    ]);
+    return {
+        dirs: (dir) => dirs.has(dir)
+            ? [...new Set([...files.keys()].filter((p) => p.startsWith(dir + "/"))
+                .map((p) => p.slice(dir.length + 1).split("/")[0]))]
+            : [],
+        jsonl: (dir) => dirs.has(dir)
+            ? [...new Set([...files.keys()].filter((p) => p.startsWith(dir + "/"))
+                .map((p) => p.slice(dir.length + 1)))].filter((n) => n.endsWith(".jsonl"))
+            : [],
+        stat: (file) => files.has(file)
+            ? { size: file.length, mtime: new Date(times.get(file) ?? 0) }
+            : null,
+        head: (file, n) => (files.get(file) ?? []).slice(0, n),
+    };
+}
+
+test("harnessSessions puts the current workspace's chats first, then newest", () => {
+    const sessions = harnessSessions("/home/u", "/home/u/Desktop/C", fakeHarnessFs());
+    // C (current workspace) first — Codex then Claude by recency — then the
+    // other projects, also newest first.
+    assert.deepEqual(
+        sessions.map((s) => `${s.harness}:${s.title}`),
+        ["Codex:codex first question",
+         "Claude Code:Claude C (current workspace)",
+         "Claude Code:Claude chat A",
+         "Claude Code:first words here"]);
+    assert.equal(sessions[0].cwd, "/home/u/Desktop/C");
+    assert.equal(sessions[0].when.getTime(), 5000);
+});
+
+test("harnessSessions keeps the current workspace's chats and leads with them", () => {
+    // The workspace the user has open is where they came from, so its Claude
+    // and Codex chats must be offered and must precede every other project.
+    const sessions = harnessSessions("/home/u", "/home/u/Desktop/C", fakeHarnessFs());
+    const here = sessions.filter((s) => s.cwd === "/home/u/Desktop/C");
+    assert.equal(here.length, 2, "both the Claude and Codex sessions in C");
+    // The block of C sessions must occupy the front of the list.
+    assert.ok(sessions.slice(0, here.length).every((s) => s.cwd === "/home/u/Desktop/C"));
+});
+
+test("harnessSessions honours the limit and skips unreadable files", () => {
+    const fs = fakeHarnessFs();
+    const limited = harnessSessions("/home/u", "/x", fs, 2);
+    assert.equal(limited.length, 2);
+    const broken: HarnessFs = {
+        ...fs,
+        stat: () => null,
+    };
+    assert.deepEqual(harnessSessions("/home/u", "/x", broken), []);
+});

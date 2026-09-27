@@ -157,6 +157,12 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "piVscode.importHarnessChats",
+        "title": "Import Chat from Claude Code or Codex...",
+        "category": "Metwally",
+        "icon": "$(history)"
+      },
+      {
         "command": "piVscode.newSkill",
         "title": "New Skill...",
         "category": "Metwally",
@@ -242,6 +248,11 @@
           "command": "piVscode.importHarnessResources",
           "when": "view == piVscode.chatView",
           "group": "2_author@3"
+        },
+        {
+          "command": "piVscode.importHarnessChats",
+          "when": "view == piVscode.chatView",
+          "group": "2_author@4"
         }
       ],
       "editor/context": [

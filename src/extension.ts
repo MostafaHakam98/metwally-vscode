@@ -2,13 +2,15 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
+import { randomUUID } from "crypto";
 import { spawnSync } from "child_process";
 import { PiRpcClient, UsageInfo } from "./rpc-client";
 import {
     CommandKind, CommandScope, commandDir, commandFile, commandInvocation, finalAgentError,
     estimateTokens, expandPath as expandPathIn, filePathFromArgs as filePathFromArgsIn,
     applyLinkSelection, harnessCandidates, HarnessSource, linkedFrom, settingsPathFor,
-    historyFromMessages, StoredMessage,
+    harnessSessions, HarnessSession, parseClaudeTranscript, parseCodexTranscript,
+    historyFromMessages, HistoryEntry, StoredMessage,
     humanBytes, isPiCommand, lineDelta, normalizePiCommand, PiCommandInfo,
     promptScaffold, RawPiCommand, relativeTime, skillScaffold,
     slugify, textOf, titleFromPrompt, truncateForContext, validateCommandName,
@@ -598,6 +600,10 @@ class ChatSession {
 
             case "import-harness":
                 await vscode.commands.executeCommand(`${CFG}.importHarnessResources`);
+                break;
+
+            case "import-chat":
+                await vscode.commands.executeCommand(`${CFG}.importHarnessChats`);
                 break;
 
             case "new-skill":
@@ -1643,6 +1649,132 @@ async function importHarnessResources(mgr: SessionManager): Promise<void> {
         : "Links removed");
 }
 
+// -----------------------------------------------------------------------------
+// Importing chats (conversation history) from Claude Code and Codex
+//
+// Neither harness exposes its transcripts to pi, so importing means a
+// conversion: the harness JSONL is parsed down to the user/assistant prose, a
+// pi-native session file is written into pi's own session store, and the
+// existing session-switch path loads it. The transcript itself is not
+// touched, so the source chat keeps working in its own harness.
+// -----------------------------------------------------------------------------
+
+/** Write the transcript as a pi session file; returns the new file path. */
+function buildImportedSessionFile(history: HistoryEntry[]): string {
+    const workDir = workingDir();
+    const dir = expandPath(cfg("sessionDir", "")) || path.join(os.homedir(), ".pi", "agent", "sessions");
+    // pi encodes the cwd into the subdirectory name the same way as /resume.
+    const sub = `--${workDir.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+    const dirPath = path.join(dir, sub);
+    fs.mkdirSync(dirPath, { recursive: true });
+
+    const now = new Date();
+    const stamp = now.toISOString().replace(/[:.]/g, "-").replace("Z", "Z");
+    const sessionId = randomUUID();
+    const zeroUsage = {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+
+    const lines: string[] = [];
+    // The header's cwd must exist on disk: pi refuses to resume a session
+    // whose stored working directory has vanished.
+    lines.push(JSON.stringify({
+        type: "session", version: 3, id: sessionId,
+        timestamp: now.toISOString(), cwd: workDir,
+    }));
+    let parentId: string | null = null;
+    for (const h of history) {
+        const id = randomUUID().replace(/-/g, "").slice(0, 8);
+        const message = h.role === "user"
+            ? { role: "user", content: [{ type: "text", text: h.text }], timestamp: now.getTime() }
+            : {
+                role: "assistant", content: [{ type: "text", text: h.text }],
+                api: "openai", provider: "openai", model: "imported",
+                usage: zeroUsage, stopReason: "stop", timestamp: now.getTime(),
+            };
+        lines.push(JSON.stringify({
+            type: "message", id, parentId, timestamp: now.toISOString(), message,
+        }));
+        parentId = id;
+    }
+
+    const file = path.join(dirPath, `${stamp}_${sessionId}.jsonl`);
+    fs.writeFileSync(file, lines.join("\n") + "\n", "utf8");
+    return file;
+}
+
+/**
+ * Pick a Claude Code or Codex conversation and continue it in a new session.
+ *
+ * The parsed turns become the imported session's context, so the agent keeps
+ * the thread's context. The source transcript is only read, never modified.
+ */
+async function importHarnessChats(mgr: SessionManager): Promise<void> {
+    const sessions = harnessSessions(os.homedir(), workingDir(), {
+        dirs: (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { return []; } },
+        jsonl: (d) => { try { return fs.readdirSync(d).filter((f) => f.endsWith(".jsonl")); } catch { return []; } },
+        stat: (f) => { try { const s = fs.statSync(f); return { size: s.size, mtime: s.mtime }; } catch { return null; } },
+        head: (f, n) => {
+            // A bounded read: the title lives in the first records, and these
+            // files can run to many megabytes, so never read them whole here.
+            try {
+                const fd = fs.openSync(f, "r");
+                const buf = Buffer.alloc(256 * 1024);
+                const len = fs.readSync(fd, buf, 0, buf.length, 0);
+                fs.closeSync(fd);
+                return buf.subarray(0, len).toString("utf8").split("\n").slice(0, n);
+            } catch { return []; }
+        },
+    }, 200);
+
+    if (!sessions.length) {
+        void vscode.window.showInformationMessage(
+            "Metwally: found no Claude Code or Codex conversations to import. "
+            + "Checked ~/.claude/projects and ~/.codex/sessions.",
+        );
+        return;
+    }
+
+    const pick = await vscode.window.showQuickPick(
+        sessions.map((s) => ({
+            label: `${s.harness === "Codex" ? "$(circuit-board)" : "$(sparkle)"} ${s.title}`,
+            description: s.cwd ? vscode.workspace.asRelativePath(vscode.Uri.file(s.cwd)) || s.cwd : "",
+            detail: `${s.harness} · ${relativeTime(s.when)} · ${humanBytes(s.size)}`,
+            session: s,
+        })),
+        {
+            title: "Import a Claude Code or Codex conversation",
+            placeHolder: "Opens as a new session; the original transcript is left untouched",
+            matchOnDetail: true,
+        },
+    );
+    if (!pick) return;
+
+    const lines = fs.readFileSync(pick.session.path, "utf8").split("\n");
+    const history = pick.session.harness === "Codex"
+        ? parseCodexTranscript(lines, cfg("promptPreamble", ""))
+        : parseClaudeTranscript(lines, cfg("promptPreamble", ""));
+    if (!history?.length) {
+        void vscode.window.showErrorMessage(
+            `Metwally: ${pick.session.path} holds no user/assistant turns to import.`,
+        );
+        return;
+    }
+
+    const file = buildImportedSessionFile(history);
+    log(`imported ${history.length} turns from ${pick.session.path} into ${file}`);
+
+    // switchSession is a full session replacement (the same path /history uses),
+    // so the imported conversation simply becomes the current session and the
+    // user can keep talking to it with its context intact.
+    const session = mgr.sidebarSession();
+    await session.switchSession(file);
+    void vscode.window.showInformationMessage(
+        `Imported ${history.length} turns from ${pick.session.harness} into a new session.`,
+    );
+}
+
 /** Skills and templates are scanned when pi starts, so a new one needs a restart. */
 async function offerRestart(mgr: SessionManager, what: string): Promise<void> {
     const pick = await vscode.window.showInformationMessage(
@@ -2005,6 +2137,7 @@ export function activate(context: vscode.ExtensionContext): void {
     reg("newPromptTemplate", () => newCommandFlow(mgr, "prompt"));
     reg("browseCommands", () => browseCommands(mgr));
     reg("importHarnessResources", () => importHarnessResources(mgr));
+    reg("importHarnessChats", () => importHarnessChats(mgr));
     reg("openSettings", () =>
         vscode.commands.executeCommand("workbench.action.openSettings", "@ext:local.pi-vscode"));
 

@@ -842,6 +842,7 @@
         { name: "/help",     icon: "i-info",     desc: "Keyboard shortcuts and tips",     run: function () { helpModal(); } },
         { name: "/skills",   icon: "i-bulb",     desc: "Browse skills and commands",      run: function () { post("browse-commands"); } },
         { name: "/import",   icon: "i-download", desc: "Import Claude/Codex skills",      run: function () { post("import-harness"); } },
+        { name: "/import-chat", icon: "i-history", desc: "Import a Claude/Codex conversation", run: function () { post("import-chat"); } },
         { name: "/new-skill", icon: "i-plus",    desc: "Create a skill",                  run: function () { post("new-skill"); } },
         { name: "/new-prompt", icon: "i-plus",   desc: "Create a prompt template",        run: function () { post("new-prompt"); } },
         { name: "/context",  icon: "i-scan",     desc: "Show what is in context",         run: function () { post("context-info"); } },
@@ -1113,11 +1114,16 @@
                       svg("i-chevron") + "</button>";
               }).join("")
             : '<div class="pop-empty">No saved sessions yet.</div>';
+        html += '<button class="row-btn" data-import="1">' + svg("i-download") +
+            '<span class="row-main"><span class="row-name">Import a Claude Code or Codex conversation</span>' +
+            '<span class="row-meta">Continues it here as a new session</span></span>' +
+            svg("i-chevron") + "</button>";
         var ov = modal("Session history", html, "i-history");
         ov.addEventListener("click", function (e) {
             var b = e.target.closest(".row-btn");
             if (!b) return;
-            post("switch-session", { path: b.dataset.path });
+            if (b.dataset.import) { post("import-chat"); }
+            else { post("switch-session", { path: b.dataset.path }); }
             ov.remove();
         });
     }

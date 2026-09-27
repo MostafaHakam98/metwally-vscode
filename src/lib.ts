@@ -286,6 +286,264 @@ export function normalizePiCommand(raw: RawPiCommand): PiCommandInfo {
 }
 
 // -----------------------------------------------------------------------------
+// Importing chats (conversation history) from other agent harnesses
+//
+// Claude Code and Codex both persist every conversation as JSONL on disk. The
+// parsers below reduce one transcript file to the user/assistant prose that pi
+// can continue, dropping the harness plumbing (tool calls, thinking, injected
+// envelopes) that would only consume context in a new session.
+//
+// Filesystem access is injected by the extension host so this file stays
+// plain-Node testable; the extension passes in the real readers.
+// -----------------------------------------------------------------------------
+
+/** One line of a harness transcript file. */
+type HarnessRecord = Record<string, unknown>;
+
+/**
+ * Harnesses inject context into user turns as envelopes: Claude Code wraps
+ * environment data in <system-reminder>; Codex prepends a plugin list, the
+ * AGENTS.md preferences, and an environment block to every turn. These are
+ * metadata for the other agent, not the user's words, so dropping them also
+ * keeps a stale environment snapshot out of this workspace's conversation.
+ */
+const ENVELOPE_TAGS =
+    ["system-reminder", "recommended_plugins", "environment_context", "INSTRUCTIONS"] as const;
+
+export function stripHarnessInjected(text: string): string {
+    let out = (text ?? "").replace(
+        /#\s*AGENTS\.md instructions[\s\S]*?<\/INSTRUCTIONS>/g, "");
+    // Closed envelopes: a lazy match so a real question after one survives.
+    for (const tag of ENVELOPE_TAGS) {
+        out = out.replace(new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`, "g"), "");
+    }
+    // An envelope that never closed: everything from its opener is metadata.
+    for (const tag of ENVELOPE_TAGS) {
+        out = out.replace(new RegExp(`<${tag}>[\\s\\S]*$`), "");
+    }
+    return out.trim();
+}
+
+/**
+ * Reduce one raw message to the user's/assistant's actual prose.
+ *
+ * Each content block is cleaned on its own and the empty ones are dropped, so
+ * a turn that is entirely harness envelopes reduces to nothing and the whole
+ * message is discarded by the caller. The remaining blocks are joined with a
+ * blank line to read as the user would have typed them.
+ */
+function harnessProse(msgOrContent: unknown): string {
+    // Accept either a message object ({ content }) or a raw content value, so
+    // the same cleaner serves Claude's `message` and Codex's `payload.content`.
+    const m = msgOrContent as StoredMessage | undefined;
+    const raw = (m && typeof m === "object" && "content" in m) ? m.content : msgOrContent;
+    if (typeof raw === "string") return stripHarnessInjected(raw);
+    if (!Array.isArray(raw)) return "";
+    const parts: string[] = [];
+    for (const b of raw) {
+        if (!b || typeof b !== "object") continue;
+        const rec = b as { type?: unknown; text?: string };
+        if (rec.type !== "text" && rec.type !== "input_text" && rec.type !== "output_text") continue;
+        const cleaned = stripHarnessInjected(rec.text ?? "");
+        if (cleaned) parts.push(cleaned);
+    }
+    return parts.join("\n\n");
+}
+
+/**
+ * Claude Code: ~/.claude/projects/<dashed-cwd>/<uuid>.jsonl, one record per
+ * line. Only top-level user and assistant records count; sidechains (task
+ * runs), queue bookkeeping, attachments and snapshots are skipped.
+ * Returns null when the file holds no usable conversation.
+ */
+export function parseClaudeTranscript(
+    lines: string[], preamble: string, limit = 4000,
+): HistoryEntry[] | null {
+    const messages: StoredMessage[] = [];
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        let rec: HarnessRecord;
+        try { rec = JSON.parse(line) as HarnessRecord; } catch { continue; }
+        if (rec.type !== "user" && rec.type !== "assistant") continue;
+        if (rec.isSidechain === true) continue; // sub-agent runs are not the conversation
+        const msg = rec.message as StoredMessage | undefined;
+        if (!msg) continue;
+        if (rec.type === "user") {
+            const origin = rec.origin as { kind?: string } | undefined;
+            if (origin && origin.kind !== "human") continue; // tool results, synthetic turns
+        }
+        messages.push({ role: rec.type, content: harnessProse(msg) });
+    }
+    const out = historyFromMessages(messages, preamble, limit);
+    return out.length ? out : null;
+}
+
+/**
+ * Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl.
+ * User and assistant turns are `response_item` messages; developer
+ * instructions, reasoning and tool calls are skipped.
+ */
+export function parseCodexTranscript(
+    lines: string[], preamble: string, limit = 4000,
+): HistoryEntry[] | null {
+    const messages: StoredMessage[] = [];
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        let rec: HarnessRecord;
+        try { rec = JSON.parse(line) as HarnessRecord; } catch { continue; }
+        if (rec.type !== "response_item") continue;
+        const p = rec.payload as HarnessRecord | undefined;
+        if (!p || p.type !== "message") continue;
+        const role = p.role as string | undefined;
+        if (role !== "user" && role !== "assistant") continue;
+        messages.push({ role, content: harnessProse(p.content) });
+    }
+    const out = historyFromMessages(messages, preamble, limit);
+    return out.length ? out : null;
+}
+
+/**
+ * One harness conversation on disk. The session's own working directory is
+ * kept so the importer can mark and sort the ones that happened here.
+ */
+export interface HarnessSession {
+    harness: "Claude Code" | "Codex";
+    title: string;
+    /** When the conversation ended; both writers append, so mtime is the end. */
+    when: Date;
+    size: number; // bytes
+    cwd: string | null;
+    path: string; // absolute file path
+}
+
+/** Filesystem facts the session scanner needs; the extension host supplies them. */
+export interface HarnessFs {
+    /** Immediate subdirectory names, or [] when the directory does not exist. */
+    dirs: (dir: string) => string[];
+    /** *.jsonl file names inside a directory, or [] when it does not exist. */
+    jsonl: (dir: string) => string[];
+    /** File size and mtime, or null when unreadable. */
+    stat: (file: string) => { size: number; mtime: Date } | null;
+    /** First `headLines` lines of the file, or [] when unreadable. */
+    head: (file: string, headLines: number) => string[];
+}
+
+/**
+ * Claude Code dashes the conversation's working directory into a project
+ * directory name: "/home/u/proj" becomes "home-u-proj". Inverse: restore the
+ * leading slash, turn dashes back to separators. Folder names that themselves
+ * contain dashes come back with extra slashes, which callers must tolerate.
+ */
+export function cwdFromDashed(name: string): string {
+    return "/" + (name ?? "").replace(/^-+/, "").replace(/-+$/, "").replace(/-/g, "/");
+}
+
+/** The project directory under ~/.claude/projects that matches this workspace. */
+export function claudeProjectDir(home: string, workDir: string): string {
+    const dirName = (workDir ?? "").replace(/^\/+/, "").replace(/\/+$/, "").replace(/[\\/]+/g, "-");
+    return path.join(home, ".claude", "projects", dirName);
+}
+
+/** First non-empty prose line of a session, for the picker's title. */
+function titleFromHead(head: string[], firstUserText: (rec: HarnessRecord) => string | null): string | null {
+    for (const line of head) {
+        if (!line.trim()) continue;
+        let rec: HarnessRecord;
+        try { rec = JSON.parse(line) as HarnessRecord; } catch { continue; }
+        const t = firstUserText(rec);
+        if (t?.trim()) return t.trim().split("\n").find((x) => x.trim())?.trim() ?? null;
+    }
+    return null;
+}
+
+function makeSession(
+    harness: HarnessSession["harness"], file: string, st: { size: number; mtime: Date },
+    title: string | null, cwd: string | null,
+): HarnessSession {
+    return {
+        harness,
+        title: title?.trim() || "(untitled)",
+        when: st.mtime,
+        size: st.size,
+        cwd,
+        path: file,
+    };
+}
+
+/**
+ * Every conversation worth offering, capped at `limit`.
+ *
+ * Conversations that ran in the workspace currently open in VS Code come
+ * first, then everything else by recency. Only the head of each file is read
+ * (titles live in the first records), so listing many sessions stays cheap.
+ */
+export function harnessSessions(
+    home: string, workDir: string, fs: HarnessFs, limit = 50,
+): HarnessSession[] {
+    const out: HarnessSession[] = [];
+
+    // --- Claude Code: ~/.claude/projects/<dashed-cwd>/<uuid>.jsonl ---
+    const projects = path.join(home, ".claude", "projects");
+    for (const proj of fs.dirs(projects)) {
+        const cwd = cwdFromDashed(proj);
+        const dir = path.join(projects, proj);
+        for (const f of fs.jsonl(dir)) {
+            const file = path.join(dir, f);
+            const st = fs.stat(file);
+            if (!st) continue;
+            const title = titleFromHead(fs.head(file, 8), (rec) => {
+                if (rec.type === "ai-title" && typeof rec.aiTitle === "string" && rec.aiTitle.trim()) {
+                    return rec.aiTitle;
+                }
+                if (rec.type !== "user" || rec.isSidechain === true) return null;
+                return harnessProse(rec.message) || null;
+            });
+            out.push(makeSession("Claude Code", file, st, title, cwd));
+        }
+    }
+
+    // --- Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl ---
+    const codexRoot = path.join(home, ".codex", "sessions");
+    for (const y of fs.dirs(codexRoot)) {
+        const ydir = path.join(codexRoot, y);
+        for (const m of fs.dirs(ydir)) {
+            const mdir = path.join(ydir, m);
+            for (const d of fs.dirs(mdir)) {
+                const ddir = path.join(mdir, d);
+                for (const f of fs.jsonl(ddir)) {
+                    const file = path.join(ddir, f);
+                    const st = fs.stat(file);
+                    if (!st) continue;
+                    let cwd: string | null = null;
+                    let title: string | null = null;
+                    for (const line of fs.head(file, 24)) {
+                        if (!line.trim()) continue;
+                        let rec: HarnessRecord;
+                        try { rec = JSON.parse(line) as HarnessRecord; } catch { continue; }
+                        if (rec.type === "session_meta") {
+                            cwd = (rec.payload as { cwd?: string } | undefined)?.cwd ?? null;
+                            continue;
+                        }
+                        if (title !== null) break; // first real user turn is the title
+                        const p = rec.payload as HarnessRecord | undefined;
+                        if (rec.type === "response_item" && p?.type === "message" && p.role === "user") {
+                            title = harnessProse(p.content) || null; // keep looking if it is all injected
+                        }
+                    }
+                    out.push(makeSession("Codex", file, st, title, cwd));
+                }
+            }
+        }
+    }
+
+    // The workspace the user has open is where they came from; offer its
+    // Claude/Codex chats before the rest, each group newest first.
+    const here = (s: HarnessSession) => (s.cwd === workDir ? 0 : 1);
+    out.sort((a, b) =>
+        here(a) - here(b) || b.when.getTime() - a.when.getTime());
+    return out.slice(0, limit);
+}
+
 // Importing resources from other agent harnesses
 //
 // pi already loads whole directories through the `skills` and `prompts` arrays
@@ -294,7 +552,7 @@ export function normalizePiCommand(raw: RawPiCommand): PiCommandInfo {
 // not copying and converting files — edits on either side stay in sync.
 // -----------------------------------------------------------------------------
 
-export type HarnessKind = "skills" | "prompts";
+export type HarnessKind = "skills" | "prompts" | "chats";
 
 export interface HarnessSource {
     /** Stable id, used to match a source against what is already linked. */
